@@ -232,6 +232,56 @@ namespace formneo.service.Mapping
                 .ForMember(dest => dest.Position, opt => opt.Ignore())
                 .ForMember(dest => dest.Manager, opt => opt.Ignore());
 
+            CreateMap<EmployeeAssignmentInsertDto, EmployeeAssignment>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore())
+                .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.MainClientId, opt => opt.Ignore())
+                .ForMember(dest => dest.IsDelete, opt => opt.Ignore())
+                .ForMember(dest => dest.UniqNumber, opt => opt.Ignore())
+                .ForMember(dest => dest.ConcurrencyToken, opt => opt.Ignore())
+                .ForMember(dest => dest.User, opt => opt.Ignore())
+                .ForMember(dest => dest.OrgUnit, opt => opt.Ignore())
+                .ForMember(dest => dest.Position, opt => opt.Ignore())
+                .ForMember(dest => dest.Manager, opt => opt.Ignore())
+                .ForMember(dest => dest.MainClient, opt => opt.Ignore())
+                .ForMember(dest => dest.IsActive, opt => opt.Ignore())
+                .ForMember(dest => dest.UserId, opt => opt.MapFrom(src => src.UserId))
+                .ForMember(dest => dest.OrgUnitId, opt => opt.MapFrom(src => src.OrgUnitId))
+                .ForMember(dest => dest.PositionId, opt => opt.MapFrom(src => src.PositionId))
+                .ForMember(dest => dest.ManagerId, opt => opt.MapFrom(src => src.ManagerId))
+                .ForMember(dest => dest.StartDate, opt => opt.MapFrom(src => src.StartDate ?? DateTime.UtcNow))
+                .ForMember(dest => dest.EndDate, opt => opt.MapFrom(src => src.EndDate))
+                .ForMember(dest => dest.AssignmentType, opt => opt.MapFrom(src => src.AssignmentType))
+                .ForMember(dest => dest.Notes, opt => opt.MapFrom(src => src.Notes));
+
+            CreateMap<EmployeeAssignmentUpdateDto, EmployeeAssignment>()
+                .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+                .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.MainClientId, opt => opt.Ignore())
+                .ForMember(dest => dest.IsDelete, opt => opt.Ignore())
+                .ForMember(dest => dest.UniqNumber, opt => opt.Ignore())
+                .ForMember(dest => dest.ConcurrencyToken, opt => opt.Ignore())
+                .ForMember(dest => dest.User, opt => opt.Ignore())
+                .ForMember(dest => dest.OrgUnit, opt => opt.Ignore())
+                .ForMember(dest => dest.Position, opt => opt.Ignore())
+                .ForMember(dest => dest.Manager, opt => opt.Ignore())
+                .ForMember(dest => dest.MainClient, opt => opt.Ignore())
+                .ForMember(dest => dest.IsActive, opt => opt.Ignore())
+                .ForMember(dest => dest.UserId, opt => opt.Ignore()) // Update'te UserId değiştirilmez
+                .ForMember(dest => dest.StartDate, opt => opt.Ignore()) // Controller'da manuel set ediliyor
+                .ForMember(dest => dest.OrgUnitId, opt => opt.MapFrom(src => src.OrgUnitId))
+                .ForMember(dest => dest.PositionId, opt => opt.MapFrom(src => src.PositionId))
+                .ForMember(dest => dest.ManagerId, opt => opt.MapFrom(src => src.ManagerId))
+                .ForMember(dest => dest.EndDate, opt => opt.MapFrom(src => src.EndDate))
+                .ForMember(dest => dest.AssignmentType, opt => opt.MapFrom(src => src.AssignmentType))
+                .ForMember(dest => dest.Notes, opt => opt.MapFrom(src => src.Notes));
+
             CreateMap<EmployeeAssignmentListDto, EmployeeAssignmentInsertDto>().ReverseMap();
             CreateMap<EmployeeAssignmentListDto, EmployeeAssignmentUpdateDto>().ReverseMap();
 

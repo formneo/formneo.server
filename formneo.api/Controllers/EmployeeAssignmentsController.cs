@@ -328,13 +328,24 @@ namespace formneo.api.Controllers
                     }
                 }
 
-                var assignment = _mapper.Map<EmployeeAssignment>(dto);
+                // Mevcut assignment'ı kopyala ve sadece DTO'da belirtilen alanları güncelle
+                var assignment = _mapper.Map<EmployeeAssignment>(existingAssignment);
+                _mapper.Map(dto, assignment); // DTO'dan gelen değerleri uygula
                 
-                // StartDate ve EndDate kontrolü
+                // Mevcut değerleri koru (mapping'de ignore edilen alanlar için)
+                assignment.UserId = existingAssignment.UserId;
+                
+                // StartDate: DTO'da belirtilmişse güncelle, yoksa mevcut değeri koru
                 if (dto.StartDate.HasValue)
                 {
                     assignment.StartDate = dto.StartDate.Value;
                 }
+                else
+                {
+                    assignment.StartDate = existingAssignment.StartDate;
+                }
+                
+                // EndDate kontrolü
                 if (dto.EndDate.HasValue)
                 {
                     assignment.EndDate = dto.EndDate.Value;
@@ -344,6 +355,29 @@ namespace formneo.api.Controllers
                         _unitOfWork.Rollback();
                         return BadRequest("EndDate cannot be earlier than StartDate");
                     }
+                }
+                else
+                {
+                    assignment.EndDate = existingAssignment.EndDate;
+                }
+                
+                // AssignmentType ve Notes: DTO'da belirtilmişse güncelle
+                if (dto.AssignmentType != default(AssignmentType))
+                {
+                    assignment.AssignmentType = dto.AssignmentType;
+                }
+                else
+                {
+                    assignment.AssignmentType = existingAssignment.AssignmentType;
+                }
+                
+                if (dto.Notes != null)
+                {
+                    assignment.Notes = dto.Notes;
+                }
+                else
+                {
+                    assignment.Notes = existingAssignment.Notes;
                 }
 
                 var result = await _employeeAssignments.UpdateAsync(_mapper.Map<EmployeeAssignmentListDto>(assignment));
