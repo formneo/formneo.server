@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using formneo.repository;
@@ -11,9 +12,11 @@ using formneo.repository;
 namespace formneo.repository.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    partial class AppDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260118174546_organaztion3")]
+    partial class organaztion3
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -2460,7 +2463,7 @@ namespace formneo.repository.Migrations
                         {
                             Id = new Guid("1bf2fc2e-0e25-46a8-aa96-8f1480331b5b"),
                             ClientId = new Guid("77df6fbd-4160-4cea-8f24-96564b54e5ac"),
-                            CreatedDate = new DateTime(2026, 1, 19, 8, 28, 28, 116, DateTimeKind.Utc).AddTicks(2620),
+                            CreatedDate = new DateTime(2026, 1, 18, 17, 45, 45, 747, DateTimeKind.Utc).AddTicks(5210),
                             Name = "formneo"
                         });
                 });
@@ -3667,7 +3670,7 @@ namespace formneo.repository.Migrations
                         new
                         {
                             Id = new Guid("77df6fbd-4160-4cea-8f24-96564b54e5ac"),
-                            CreatedDate = new DateTime(2026, 1, 19, 8, 28, 28, 116, DateTimeKind.Utc).AddTicks(3450),
+                            CreatedDate = new DateTime(2026, 1, 18, 17, 45, 45, 747, DateTimeKind.Utc).AddTicks(6070),
                             DomainVerified = false,
                             Email = "info@formneo.com",
                             FeatureFlags = "{}",
@@ -4095,7 +4098,7 @@ namespace formneo.repository.Migrations
                         {
                             Id = new Guid("0779dd43-6047-400d-968d-e6f1b0c3b286"),
                             CompanyId = new Guid("1bf2fc2e-0e25-46a8-aa96-8f1480331b5b"),
-                            CreatedDate = new DateTime(2026, 1, 19, 8, 28, 28, 116, DateTimeKind.Utc).AddTicks(3540),
+                            CreatedDate = new DateTime(2026, 1, 18, 17, 45, 45, 747, DateTimeKind.Utc).AddTicks(6150),
                             Name = "formneo"
                         });
                 });
@@ -5838,6 +5841,9 @@ namespace formneo.repository.Migrations
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
 
+                    b.Property<Guid?>("OrgUnitId")
+                        .HasColumnType("uuid");
+
                     b.Property<string>("PasswordHash")
                         .HasColumnType("text");
 
@@ -5847,13 +5853,19 @@ namespace formneo.repository.Migrations
                     b.Property<bool>("PhoneNumberConfirmed")
                         .HasColumnType("boolean");
 
-                    b.Property<Guid?>("PositionsId")
+                    b.Property<Guid?>("PositionId")
                         .HasColumnType("uuid");
 
                     b.Property<DateTime?>("ResetCodeExpiry")
                         .HasColumnType("timestamp without time zone");
 
                     b.Property<string>("ResetPasswordCode")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SAPDepartmentText")
+                        .HasColumnType("text");
+
+                    b.Property<string>("SAPPositionText")
                         .HasColumnType("text");
 
                     b.Property<string>("SecurityStamp")
@@ -5877,6 +5889,9 @@ namespace formneo.repository.Migrations
                     b.Property<string>("UserName")
                         .HasMaxLength(256)
                         .HasColumnType("character varying(256)");
+
+                    b.Property<Guid?>("WorkCompanyId")
+                        .HasColumnType("uuid");
 
                     b.Property<bool>("canSsoLogin")
                         .HasColumnType("boolean");
@@ -5912,9 +5927,14 @@ namespace formneo.repository.Migrations
                         .IsUnique()
                         .HasDatabaseName("UserNameIndex");
 
-                    b.HasIndex("PositionsId");
+                    b.HasIndex("OrgUnitId");
+
+                    b.HasIndex("PositionId");
 
                     b.HasIndex("TicketDepartmentId");
+
+                    b.HasIndex("WorkCompanyId")
+                        .IsUnique();
 
                     b.ToTable("AspNetUsers", (string)null);
                 });
@@ -6182,8 +6202,6 @@ namespace formneo.repository.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("MainClientId");
-
-                    b.HasIndex("UserAppId");
 
                     b.HasIndex("WorkCompanyTicketMatrisId");
 
@@ -8136,15 +8154,31 @@ namespace formneo.repository.Migrations
                         .HasForeignKey("FormAuthId")
                         .OnDelete(DeleteBehavior.NoAction);
 
-                    b.HasOne("formneo.core.Models.Positions", null)
+                    b.HasOne("formneo.core.Models.OrgUnit", "OrgUnit")
+                        .WithMany("Users")
+                        .HasForeignKey("OrgUnitId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("formneo.core.Models.Positions", "Positions")
                         .WithMany("UserApps")
-                        .HasForeignKey("PositionsId")
+                        .HasForeignKey("PositionId")
                         .OnDelete(DeleteBehavior.NoAction);
 
                     b.HasOne("formneo.core.Models.Ticket.TicketDepartment", null)
                         .WithMany("employess")
                         .HasForeignKey("TicketDepartmentId")
                         .OnDelete(DeleteBehavior.NoAction);
+
+                    b.HasOne("formneo.core.Models.WorkCompany", "WorkCompany")
+                        .WithOne("UserApp")
+                        .HasForeignKey("formneo.core.Models.UserApp", "WorkCompanyId")
+                        .OnDelete(DeleteBehavior.NoAction);
+
+                    b.Navigation("OrgUnit");
+
+                    b.Navigation("Positions");
+
+                    b.Navigation("WorkCompany");
                 });
 
             modelBuilder.Entity("formneo.core.Models.UserTenant", b =>
@@ -8220,11 +8254,6 @@ namespace formneo.repository.Migrations
                         .OnDelete(DeleteBehavior.NoAction)
                         .IsRequired();
 
-                    b.HasOne("formneo.core.Models.UserApp", "UserApp")
-                        .WithMany()
-                        .HasForeignKey("UserAppId")
-                        .OnDelete(DeleteBehavior.NoAction);
-
                     b.HasOne("formneo.core.Models.WorkCompanyTicketMatris", null)
                         .WithMany("ToCompanies")
                         .HasForeignKey("WorkCompanyTicketMatrisId")
@@ -8236,8 +8265,6 @@ namespace formneo.repository.Migrations
                         .OnDelete(DeleteBehavior.NoAction);
 
                     b.Navigation("MainClient");
-
-                    b.Navigation("UserApp");
 
                     b.Navigation("WorkFlowDefination");
                 });
@@ -8403,6 +8430,8 @@ namespace formneo.repository.Migrations
             modelBuilder.Entity("formneo.core.Models.OrgUnit", b =>
                 {
                     b.Navigation("SubOrgUnits");
+
+                    b.Navigation("Users");
                 });
 
             modelBuilder.Entity("formneo.core.Models.Positions", b =>
@@ -8447,6 +8476,11 @@ namespace formneo.repository.Migrations
                     b.Navigation("DepartmentUsers");
 
                     b.Navigation("EmployeeAssignments");
+                });
+
+            modelBuilder.Entity("formneo.core.Models.WorkCompany", b =>
+                {
+                    b.Navigation("UserApp");
                 });
 
             modelBuilder.Entity("formneo.core.Models.WorkCompanyTicketMatris", b =>

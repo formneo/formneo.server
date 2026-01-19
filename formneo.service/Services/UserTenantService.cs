@@ -47,10 +47,7 @@ namespace formneo.service.Services
             exists.HasOtherDeptCalendarPerm = dto.HasOtherDeptCalendarPerm;
             exists.canEditTicket = dto.canEditTicket;
             exists.DontApplyDefaultFilters = dto.DontApplyDefaultFilters;
-            exists.mainManagerUserAppId = dto.mainManagerUserAppId;
             exists.PCname = dto.PCname;
-            exists.manager1 = dto.manager1;
-            exists.manager2 = dto.manager2;
             _genericRepository.Update(exists);
             await _unitOfWork.CommitAsync();
             return _mapper.Map<UserTenantListDto>(exists);

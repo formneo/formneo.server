@@ -14,9 +14,11 @@ namespace formneo.core.Models
         public string Name { get; set; }
         public string? Description { get; set; } = null;
 
-        [ForeignKey("CustomerRef")]
-        public Guid? CustomerRefId { get; set; } = null;
-        public virtual WorkCompany? CustomerRef { get; set; } = null;
+        public Guid? ParentPositionId { get; set; }
+        [ForeignKey("ParentPositionId")]
+        public virtual Positions? ParentPosition { get; set; }
+        public virtual List<Positions> SubPositions { get; set; } = new List<Positions>();
+
         public virtual List<UserApp> UserApps { get; set; } = new List<UserApp>();
 
 

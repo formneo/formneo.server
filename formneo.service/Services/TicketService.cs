@@ -448,24 +448,11 @@ namespace formneo.service.Services
             if (userPermission)
             {
                 //Kullanıcının departmandaki tüm kullanıcıları getirir
-                var ticketDepId = (await _userService.GetUserByEmailAsync(createUser)).Data.TicketDepartmentId;
 
-                var userEmails = _userManager.Users
-                                 .Where(e => e.TicketDepartmentId == ticketDepId)
-                                 .Select(e => e.Email)
-                                 .ToList();
 
-                query = _ticketRepository.Where(e => e.IsDelete == false && userEmails.Contains(e.CreatedBy) && (statues == null || statues.Count == 0 || statues.Contains((int)e.Status)))
-                   .Include(ticket => ticket.UserApp)
-                   .Include(ticket => ticket.WorkCompany)
-                   .Include(ticket => ticket.CustomerRef)
-                   .Include(ticket => ticket.TicketDepartment)
-                   .Include(ticket => ticket.TicketAssigne)
-                   .ThenInclude(assigne => assigne.UserApp) // TicketAssigne içindeki UserApp ilişkisini yükle
-                   .Include(ticket => ticket.TicketAssigne)
-                   .ThenInclude(assigne => assigne.TicketTeam)
-                   .Include(ticket => ticket.TicketProject)
-                   .AsQueryable();
+
+
+                query = null;
             }
 
             if (!string.IsNullOrEmpty(filters.workCompanyId))

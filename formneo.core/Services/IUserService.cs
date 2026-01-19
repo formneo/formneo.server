@@ -14,12 +14,12 @@ namespace formneo.core.Services
         Task<CustomResponseDto<UserAppDto>> UpdateUserAsync(UpdateUserDto createUserDto);
         Task<CustomResponseDto<UserAppDto>> CreateUserAsync(CreateUserDto createUserDto);
         Task<CustomResponseDto<UserAppDto>> GetUserByNameAsync(string userName);
+        Task<CustomResponseDto<UserAppDto>> GetUserByIdAsync(string userId);
         Task<CustomResponseDto<List<UserAppDto>>> GetAllUsersAsync();
 
         Task<CustomResponseDto<List<UserAppDtoWithoutPhoto>>> GetAllUserWithOutPhoto();
         Task<CustomResponseDto<List<UserAppDtoWithoutPhoto>>> GetAllUserWithOutPhotoForManagement();
         Task<CustomResponseDto<List<UserAppDtoOnlyNameId>>> GetAllUsersNameIdOnly();
-        Task<CustomResponseDto<List<UserAppDtoOnlyNameId>>> GetAllUsersNameIdOnlyCompany(List<string> companies);
 
         Task<CustomResponseDto<List<UserAppDto>>> GetAllUsersAsyncWitName(string name);
         Task<CustomResponseDto<List<UserAppDto>>> GetAllUsersAsyncWitNameCompany(string name, List<string> companies);

@@ -6,6 +6,8 @@ using NLayer.Core.Services;
 using System;
 using formneo.core.DTOs;
 using formneo.core.DTOs.Budget.SF;
+using formneo.core.DTOs.EmployeeAssignments;
+using formneo.core.Helpers;
 using formneo.core.Models;
 using formneo.core.Services;
 using formneo.core.UnitOfWorks;
@@ -19,15 +21,17 @@ namespace formneo.service.Services
         private readonly IMapper _mapper;
         private readonly IUnitOfWork _unitOfWork;
         private readonly IGlobalServiceWithDto<AspNetRolesMenu, RoleMenuListDto> _roleMenuService;
+        private readonly IServiceWithDto<EmployeeAssignment, EmployeeAssignmentListDto> _employeeAssignmentService;
 
 
-        public UserService(UserManager<UserApp> userManager, RoleManager<IdentityRole> roleManager, IMapper mapper, IUnitOfWork unitOfWork,  IGlobalServiceWithDto<AspNetRolesMenu, RoleMenuListDto> roleMenuService)
+        public UserService(UserManager<UserApp> userManager, RoleManager<IdentityRole> roleManager, IMapper mapper, IUnitOfWork unitOfWork,  IGlobalServiceWithDto<AspNetRolesMenu, RoleMenuListDto> roleMenuService, IServiceWithDto<EmployeeAssignment, EmployeeAssignmentListDto> employeeAssignmentService)
         {
             _userManager = userManager;
             _roleManager = roleManager;
             _mapper = mapper;
             _unitOfWork = unitOfWork;
             _roleMenuService = roleMenuService;
+            _employeeAssignmentService = employeeAssignmentService;
         }
 
         public async Task<CustomResponseDto<UserAppDto>> CreateUserAsync(CreateUserDto createUserDto)
@@ -41,8 +45,7 @@ namespace formneo.service.Services
                 photo = createUserDto.photo,
                 Email = createUserDto.Email,
                 UserName = createUserDto.UserName,
-                WorkCompanyId = null,
-                TicketDepartmentId =null,
+                // OrgUnitId ve PositionId artık EmployeeAssignment'da tutuluyor
                 canSsoLogin = createUserDto.canSsoLogin,
                 isSystemAdmin = createUserDto.isSystemAdmin,
             };
@@ -55,6 +58,19 @@ namespace formneo.service.Services
                 return CustomResponseDto<UserAppDto>.Fail(400, errors);
             }
 
+            // EmployeeAssignment oluştur (eğer OrgUnitId veya PositionId varsa)
+            if (createUserDto.OrgUnitId.HasValue || createUserDto.PositionId.HasValue)
+            {
+                var assignmentDto = new EmployeeAssignmentInsertDto
+                {
+                    UserId = user.Id,
+                    OrgUnitId = createUserDto.OrgUnitId,
+                    PositionId = createUserDto.PositionId,
+                    StartDate = DateTime.UtcNow,
+                    AssignmentType = AssignmentType.Primary
+                };
+                await _employeeAssignmentService.AddAsync(_mapper.Map<EmployeeAssignmentListDto>(_mapper.Map<EmployeeAssignment>(assignmentDto)));
+            }
 
             var userAppDto = _mapper.Map<UserAppDto>(user);
 
@@ -111,8 +127,9 @@ namespace formneo.service.Services
         {
             name = NormalizeTurkishCharacters(name);
             // Tüm kullanıcıları çekiyoruz
+            // NOT: WorkCompanyId kaldırıldı, companies filtresi şimdilik kaldırıldı
             var users = _userManager.Users
-           .Where(u => u.isBlocked == false && u.isTestData != true && EF.Functions.Like(u.UserName, $"{name}%") && companies.Contains(u.WorkCompanyId.ToString())).ToList();
+           .Where(u => u.isBlocked == false && u.isTestData != true && EF.Functions.Like(u.UserName, $"{name}%")).ToList();
 
             // Kullanıcıları UserAppDto'ya map ediyoruzm
             var list = _mapper.Map<List<UserAppDto>>(users);
@@ -125,7 +142,6 @@ namespace formneo.service.Services
         {
             var users = _userManager.Users
                 .Where(e => e.isBlocked == false)
-                   .Include(user => user.WorkCompany).Include(e => e.TicketDepartment)
                 .Select(user => new UserAppDtoWithoutPhoto
                 {
                     Id = user.Id,
@@ -133,13 +149,12 @@ namespace formneo.service.Services
                     LastName = user.LastName,
                     Email = user.Email,
                     UserName = user.UserName,
-                    SAPPositionText = user.SAPPositionText,
-                    DepartmentText = user.TicketDepartment.DepartmentText,
-                    WorkCompanyText = user.WorkCompany.Name,
                     LastLoginDate = user.LastLoginDate ?? DateTime.MinValue,
                     isBlocked = user.isBlocked,
-                    TicketDepartmentId = user.TicketDepartmentId,
-                    PositionId = user.PositionId
+                    // PositionId ve OrgUnitId artık EmployeeAssignment tablosunda tutuluyor
+                    PositionId = null,
+                    OrgUnitId = null,
+                    OrgUnitName = null
                 })
                 .ToList();
 
@@ -151,7 +166,6 @@ namespace formneo.service.Services
         {
             // Tüm kullanıcıları çekiyoruz
             var users = _userManager.Users
-                .Include(user => user.WorkCompany).Include(e => e.TicketDepartment)
                 .Select(user => new UserAppDtoWithoutPhoto
                 {
                     Id = user.Id,
@@ -159,11 +173,11 @@ namespace formneo.service.Services
                     LastName = user.LastName,
                     Email = user.Email,
                     UserName = user.UserName,
-                    SAPPositionText = user.SAPPositionText,
-                    DepartmentText = user.TicketDepartment.DepartmentText,
-                    WorkCompanyText = user.WorkCompany.Name,
                     LastLoginDate = user.LastLoginDate ?? DateTime.MinValue,
                     isBlocked = user.isBlocked,
+                    // PositionId ve OrgUnitId artık EmployeeAssignment tablosunda tutuluyor
+                    OrgUnitId = null,
+                    OrgUnitName = null
                 })
                 .ToList();
 
@@ -196,27 +210,6 @@ namespace formneo.service.Services
             return CustomResponseDto<List<UserAppDtoOnlyNameId>>.Success(200, list);
         }
 
-        public async Task<CustomResponseDto<List<UserAppDtoOnlyNameId>>> GetAllUsersNameIdOnlyCompany(List<string> companies)
-        {
-
-            var users = _userManager.Users
-                .Where(e=>companies.Contains(e.WorkCompanyId.ToString()) && e.isBlocked == false && e.isTestData != true)
-                .Select(user => new UserAppDtoOnlyNameId
-                {
-                    Id = user.Id,
-                    FirstName = user.FirstName,
-                    LastName = user.LastName,
-                    UserName = user.UserName,
-
-                })
-                .ToList();
-
-            // Kullanıcıları UserAppDto'ya map ediyoruz
-            var list = _mapper.Map<List<UserAppDtoOnlyNameId>>(users.ToList());
-
-            // Başarılı bir yanıt dönüyoruz
-            return CustomResponseDto<List<UserAppDtoOnlyNameId>>.Success(200, list);
-        }
 
         public async Task<CustomResponseDto<UserAppDto>> GetUserByEmailAsync(string email)
         {
@@ -255,6 +248,32 @@ namespace formneo.service.Services
             }
             var userAppDtp = _mapper.Map<UserAppDto>(user);
 
+            userAppDtp.Roles = rolesWithIds;
+            return CustomResponseDto<UserAppDto>.Success(200, userAppDtp);
+        }
+
+        public async Task<CustomResponseDto<UserAppDto>> GetUserByIdAsync(string userId)
+        {
+            var user = await _userManager.FindByIdAsync(userId);
+
+            if (user == null)
+            {
+                return CustomResponseDto<UserAppDto>.Fail(404, "UserId not found");
+            }
+
+            var roles = await _userManager.GetRolesAsync(user);
+            var rolesWithIds = new List<UserRoleDto>();
+
+            foreach (var roleName in roles)
+            {
+                var role = await _roleManager.FindByNameAsync(roleName);
+                if (role != null)
+                {
+                    rolesWithIds.Add(new UserRoleDto { RoleId = role.Id, RoleName = role.Name });
+                }
+            }
+
+            var userAppDtp = _mapper.Map<UserAppDto>(user);
             userAppDtp.Roles = rolesWithIds;
             return CustomResponseDto<UserAppDto>.Success(200, userAppDtp);
         }

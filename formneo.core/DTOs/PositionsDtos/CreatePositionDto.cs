@@ -10,6 +10,6 @@ namespace formneo.core.DTOs.PositionsDtos
     {
         public string Name { get; set; }
         public string? Description { get; set; } = null;
-        public Guid? CustomerRefId { get; set; } = null;
+        public Guid? ParentPositionId { get; set; } = null;
     }
 }

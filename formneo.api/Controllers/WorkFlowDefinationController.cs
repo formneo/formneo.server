@@ -45,16 +45,12 @@ namespace formneo.api.Controllers
         }
 
         [HttpGet("{id}")]
-        public async Task<WorkFlowDefinationUpdateDto> GetById(string id)
+        public async Task<WorkFlowDefinationListDto> GetById(string id)
         {
+
+
             var workFlowDefination = await _service.GetByIdStringGuidAsync(new Guid(id));
-            var workFlowDefinationDto = _mapper.Map<WorkFlowDefinationUpdateDto>(workFlowDefination);
-            // GetById için Defination'ı manuel olarak set et (detay sayfası için gerekli)
-            // List endpoint'lerinde Defination exclude edilir ama GetById'de dönmeli
-            if (workFlowDefination != null)
-            {
-                workFlowDefinationDto.Defination = workFlowDefination.Defination;
-            }
+            var workFlowDefinationDto = _mapper.Map<WorkFlowDefinationListDto>(workFlowDefination);
             return workFlowDefinationDto;
         }
 

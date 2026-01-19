@@ -18,8 +18,10 @@ using System.Threading.Tasks;
 using formneo.api.Controllers;
 using formneo.api.Helper;
 using formneo.core.DTOs;
-using formneo.core.DTOs.Ticket.TicketDepartments;
+using formneo.core.DTOs.EmployeeAssignments;
+using formneo.core.DTOs.OrgUnits;
 using formneo.core.EnumExtensions;
+using formneo.core.Helpers;
 using formneo.core.Models;
 using formneo.core.Models.TaskManagement;
 using formneo.core.Models.Ticket;
@@ -37,15 +39,16 @@ namespace formneo.api.Controllers
         private readonly IMapper _mapper;
         private readonly UserManager<UserApp> _userManager;
         private readonly IServiceWithDto<WorkCompanyTicketMatris, WorkCompanyTicketMatrisListDto> _workCompanyMatrisService;
-        private readonly IServiceWithDto<TicketDepartment, TicketDepartmensListDto> _ticketDepartments;
+        private readonly IServiceWithDto<OrgUnit, OrgUnitListDto> _orgUnits;
+        private readonly IServiceWithDto<EmployeeAssignment, EmployeeAssignmentListDto> _employeeAssignmentService;
         private readonly DbNameHelper _dbNameHelper;
         private readonly ITenantContext _tenantContext;
         private readonly IUserTenantService _userTenantService;
         private readonly RoleManager<IdentityRole> _roleManager;
-        public UserController(DbNameHelper dbNameHelper, IMapper mapper, IServiceWithDto<TicketDepartment, TicketDepartmensListDto> Service, IUserService userService, UserManager<UserApp> userManager, IServiceWithDto<WorkCompanyTicketMatris, WorkCompanyTicketMatrisListDto> workCompanyMatrisService, ITicketServices ticketService, ITenantContext tenantContext, IUserTenantService userTenantService, RoleManager<IdentityRole> roleManager)
+        public UserController(DbNameHelper dbNameHelper, IMapper mapper, IServiceWithDto<OrgUnit, OrgUnitListDto> orgUnitsService, IUserService userService, UserManager<UserApp> userManager, IServiceWithDto<WorkCompanyTicketMatris, WorkCompanyTicketMatrisListDto> workCompanyMatrisService, ITicketServices ticketService, ITenantContext tenantContext, IUserTenantService userTenantService, RoleManager<IdentityRole> roleManager, IServiceWithDto<EmployeeAssignment, EmployeeAssignmentListDto> employeeAssignmentService)
         {
             _dbNameHelper = dbNameHelper;
-            _ticketDepartments = Service;
+            _orgUnits = orgUnitsService;
             _userService = userService;
             _mapper = mapper;
             _userManager = userManager;
@@ -54,6 +57,7 @@ namespace formneo.api.Controllers
             _tenantContext = tenantContext;
             _userTenantService = userTenantService;
             _roleManager = roleManager;
+            _employeeAssignmentService = employeeAssignmentService;
         }
 
         private async Task<IQueryable<UserApp>> ApplyTenantFilterAsync(IQueryable<UserApp> query)
@@ -130,11 +134,47 @@ namespace formneo.api.Controllers
             return data.Data;
         }
 
-        // Tüm kullanıcılar, sadece kullanıcı tanımlama ekranında kullanılmalı
-        [HttpGet("GetAllWithOuthPhotoForManagement")]
-        public async Task<List<UserAppDtoWithoutPhoto>> GetAllWithOuthPhotoForManagement()
+        // ID ile kullanıcı verisi getirir
+        [HttpGet("GetById/{userId}")]
+        public async Task<ActionResult<UserAppDto>> GetUserById(string userId)
         {
-            var list = await _userService.GetAllUserWithOutPhotoForManagement();
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                return BadRequest("UserId parameter is required");
+            }
+
+            var data = await _userService.GetUserByIdAsync(userId);
+            
+            if (data.Data == null)
+            {
+                return NotFound();
+            }
+
+            return data.Data;
+        }
+
+        // Kullanıcı adına göre kullanıcıları getirir (UserName ile başlayan)
+        [HttpGet("GetAllUsersWithName/{name?}")]
+        public async Task<List<UserAppDto>> GetAllUsersWithName(string name = null)
+        {
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return new List<UserAppDto>();
+            }
+
+            var result = await _userService.GetAllUsersAsyncWitName(name);
+            return result.Data ?? new List<UserAppDto>();
+        }
+
+        // Tüm kullanıcıları getirir (fotoğrafsız)
+        // includeBlocked: true ise blokeli kullanıcılar da dahil edilir (yönetim için)
+        [HttpGet("GetAllWithOuthPhoto")]
+        public async Task<List<UserAppDtoWithoutPhoto>> GetAllWithOuthPhoto([FromQuery] bool includeBlocked = false)
+        {
+            var list = includeBlocked 
+                ? await _userService.GetAllUserWithOutPhotoForManagement()
+                : await _userService.GetAllUserWithOutPhoto();
+            
             var items = list.Data.OrderBy(e => e.FirstName).ToList();
 
             // Tenant bazlı filtre: header varsa sadece o tenant üyeleri
@@ -148,237 +188,19 @@ namespace formneo.api.Controllers
             return items;
         }
 
-        // Aktif, test olmayan formneo kullanıcılarını getirir, departmana göre filtreleme yapılabilir
-
-        private async Task<ActionResult<List<UserAppDtoWithoutPhoto>>> GetFormneoUsWithoutPhoto([FromQuery] string? departmentId)
+        // Backward compatibility için eski endpoint (yönetim için)
+        [HttpGet("GetAllWithOuthPhotoForManagement")]
+        public async Task<List<UserAppDtoWithoutPhoto>> GetAllWithOuthPhotoForManagement()
         {
-            try
-            {
-                var usersQuery = _userManager.Users
-                    .Where(e => !e.isBlocked && e.isTestData != true && e.WorkCompanyId == Guid.Parse("2e5c2ba5-3eb8-414d-8bc7-08dd44716854"));
-
-                if (!string.IsNullOrWhiteSpace(departmentId))
-                {
-                    var deptGuid = Guid.Parse(departmentId);
-                    usersQuery = usersQuery.Where(e => e.TicketDepartmentId == deptGuid);
-                }
-
-                // Tenant bazlı filtre uygula (header varsa)
-                usersQuery = await ApplyTenantFilterAsync(usersQuery);
-
-                var result = await usersQuery
-                    .OrderBy(e => e.FirstName)
-                   .Select(user => new UserAppDtoWithoutPhoto
-                   {
-                       Id = user.Id,
-                       FirstName = user.FirstName,
-                       LastName = user.LastName,
-                       Email = user.Email,
-                       UserName = user.UserName,
-                       SAPPositionText = user.SAPPositionText,
-                       DepartmentText = user.TicketDepartment.DepartmentText,
-                       WorkCompanyText = user.WorkCompany.Name,
-                       LastLoginDate = user.LastLoginDate ?? DateTime.MinValue,
-                       isBlocked = user.isBlocked,
-                       TicketDepartmentId = user.TicketDepartmentId,
-                       PositionId = user.PositionId
-                   }).ToListAsync();
-
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Internal error: {ex.Message}");
-            }
-        }
-
-
-        // Aktif, test olmayan tüm kullanıcıları getirir
-        [HttpGet("GetAllUsersNameIdOnly")]
-        public async Task<List<UserAppDtoOnlyNameId>> GetAllUsersNameIdOnly()
-        {
-            var loginName = User.Identity.Name;
-            var user = await _userManager.Users.Where(e => e.Email == loginName).Select(e => new { e.Id, e.isSystemAdmin, e.WorkCompanyId }).FirstOrDefaultAsync();
-
-            //Eğer admin ise şirket kontrolü yapma
-            bool otherCompanyPerm = false;
-            if (_tenantContext?.CurrentTenantId != null)
-            {
-                var ut = await _userTenantService.GetByUserAndTenantAsync(user.Id, _tenantContext.CurrentTenantId.Value);
-                otherCompanyPerm = ut != null && ut.HasOtherCompanyPermission;
-            }
-            // tenant context yoksa tenant-bazlı izin değerlendirilemez
-
-            if (user.isSystemAdmin || otherCompanyPerm)
-            {
-                var list = await _userService.GetAllUsersNameIdOnly();
-                var items = list.Data.OrderBy(e => e.FirstName).ToList();
-
-                if (_tenantContext?.CurrentTenantId != null)
-                {
-                    var allowed = await _userTenantService.GetUsersByTenantAsync(_tenantContext.CurrentTenantId.Value);
-                    var allowedIds = new HashSet<string>(allowed.Select(x => x.UserId));
-                    items = items.Where(u => allowedIds.Contains(u.Id)).ToList();
-                }
-
-                return items;
-            }
-
-            var companyId = user.WorkCompanyId.ToString();
-            if (string.IsNullOrWhiteSpace(companyId))
-            {
-                return new List<UserAppDtoOnlyNameId>();
-            }
-
-            var companyIds = new List<string> { companyId };
-            var data = await _userService.GetAllUsersNameIdOnlyCompany(companyIds);
-            var items2 = data.Data.OrderBy(e => e.FirstName).ToList();
-            if (_tenantContext?.CurrentTenantId != null)
-            {
-                var allowed = await _userTenantService.GetUsersByTenantAsync(_tenantContext.CurrentTenantId.Value);
-                var allowedIds = new HashSet<string>(allowed.Select(x => x.UserId));
-                items2 = items2.Where(u => allowedIds.Contains(u.Id)).ToList();
-            }
-            return items2;
-        }
-
-        // Aktif, test olmayan tüm kullanıcıları getirir
-        [HttpGet("GetAllWithOuthPhoto")]
-        public async Task<List<UserAppDtoWithoutPhoto>> GetAllWithOuthPhoto()
-        {
-            var list = await _userService.GetAllUserWithOutPhoto();
-            var items = list.Data.OrderBy(e => e.FirstName).ToList();
-            if (_tenantContext?.CurrentTenantId != null)
-            {
-                var allowed = await _userTenantService.GetUsersByTenantAsync(_tenantContext.CurrentTenantId.Value);
-                var allowedIds = new HashSet<string>(allowed.Select(x => x.UserId));
-                items = items.Where(u => allowedIds.Contains(u.Id)).ToList();
-            }
-            return items;
-        }
-
-        // Search user işlemi için
-        [HttpGet("GetAllUsersAsyncWitName")]
-        public async Task<List<UserAppDto>> GetAllUsersAsyncWitName(string name)
-        {
-            var loginName = User.Identity.Name;
-            var user = await _userManager.Users.Where(e => e.Email == loginName).Select(e => new { e.Id, e.isSystemAdmin, e.WorkCompanyId }).FirstOrDefaultAsync();
-
-            //Eğer admin ise şirket kontrolü yapma
-            bool otherCompanyPerm2 = false;
-            if (_tenantContext?.CurrentTenantId != null)
-            {
-                var ut2 = await _userTenantService.GetByUserAndTenantAsync(user.Id, _tenantContext.CurrentTenantId.Value);
-                otherCompanyPerm2 = ut2 != null && ut2.HasOtherCompanyPermission;
-            }
-            // tenant context yoksa tenant-bazlı izin değerlendirilemez
-
-            if (user.isSystemAdmin || otherCompanyPerm2)
-            {
-                var list = await _userService.GetAllUsersAsyncWitName(name);
-                var items = list.Data.OrderBy(e => e.FirstName).ToList();
-                if (_tenantContext?.CurrentTenantId != null)
-                {
-                    var allowed = await _userTenantService.GetUsersByTenantAsync(_tenantContext.CurrentTenantId.Value);
-                    var allowedIds = new HashSet<string>(allowed.Select(x => x.UserId));
-                    items = items.Where(u => allowedIds.Contains(u.Id)).ToList();
-                }
-                return items;
-            }
-
-            var companyId = user.WorkCompanyId.ToString();
-            var company = await _workCompanyMatrisService.Where(e => e.FromCompanyId == Guid.Parse(companyId));
-            var companies = company.Data.Select(e => e.ToCompaniesIds).FirstOrDefault();
-
-            var companyIds = new List<string>();
-            companyIds.Add(companyId);
-            if (companies != null)
-            {
-                foreach (var id in companies)
-                {
-                    companyIds.Add(id.ToString());
-                }
-            }
-
-            var data = await _userService.GetAllUsersAsyncWitNameCompany(name, companyIds);
-            var items2 = data.Data.OrderBy(e => e.FirstName).ToList();
-            if (_tenantContext?.CurrentTenantId != null)
-            {
-                var allowed = await _userTenantService.GetUsersByTenantAsync(_tenantContext.CurrentTenantId.Value);
-                var allowedIds = new HashSet<string>(allowed.Select(x => x.UserId));
-                items2 = items2.Where(u => allowedIds.Contains(u.Id)).ToList();
-            }
-            return items2;
-        }
-
-        [HttpGet("GetAllUsersWitNameAssign")]
-        public async Task<List<UserAppDto>> GetAllUsersWitNameAssign(string name)
-        {
-            var loginName = User.Identity.Name;
-            var user = await _userManager.Users.Where(e => e.Email == loginName).Select(e => new { e.Id, e.isSystemAdmin, e.WorkCompanyId }).FirstOrDefaultAsync();
-            var companyIds = new List<string>();
-
-            //Eğer admin ise şirket kontrolü yapma, sadece ticket sahibi şirket ve formneo kullanıcıları gelsin
-            bool otherCompanyPerm3 = false;
-            if (_tenantContext?.CurrentTenantId != null)
-            {
-                var ut3 = await _userTenantService.GetByUserAndTenantAsync(user.Id, _tenantContext.CurrentTenantId.Value);
-                otherCompanyPerm3 = ut3 != null && ut3.HasOtherCompanyPermission;
-            }
-            // tenant context yoksa tenant-bazlı izin değerlendirilemez
-
-            if (user.isSystemAdmin || otherCompanyPerm3)
-            {
-                //var workcompanyId = await _ticketService.Where(e => e.Id == Guid.Parse(ticketId)).Select(e => e.WorkCompanyId).FirstOrDefaultAsync();
-                var workcompanyId = user.WorkCompanyId;
-                companyIds.Add(workcompanyId.ToString());
-
-                if (!companyIds.Contains("2e5c2ba5-3eb8-414d-8bc7-08dd44716854"))
-                {
-                    companyIds.Add("2e5c2ba5-3eb8-414d-8bc7-08dd44716854");
-                }
-
-                var list = await _userService.GetAllUsersAsyncWitNameCompany(name, companyIds);
-                var items = list.Data.OrderBy(e => e.FirstName).ToList();
-                if (_tenantContext?.CurrentTenantId != null)
-                {
-                    var allowed = await _userTenantService.GetUsersByTenantAsync(_tenantContext.CurrentTenantId.Value);
-                    var allowedIds = new HashSet<string>(allowed.Select(x => x.UserId));
-                    items = items.Where(u => allowedIds.Contains(u.Id)).ToList();
-                }
-                return items;
-            }
-
-            var companyId = user.WorkCompanyId.ToString();
-            var company = await _workCompanyMatrisService.Where(e => e.FromCompanyId == Guid.Parse(companyId));
-            var companies = company.Data.Select(e => e.ToCompaniesIds).FirstOrDefault();
-
-
-            companyIds.Add(companyId);
-            if (companies != null)
-            {
-                foreach (var id in companies)
-                {
-                    companyIds.Add(id.ToString());
-                }
-            }
-
-            var data = await _userService.GetAllUsersAsyncWitNameCompany(name, companyIds);
-            var items2 = data.Data.OrderBy(e => e.FirstName).ToList();
-            if (_tenantContext?.CurrentTenantId != null)
-            {
-                var allowed = await _userTenantService.GetUsersByTenantAsync(_tenantContext.CurrentTenantId.Value);
-                var allowedIds = new HashSet<string>(allowed.Select(x => x.UserId));
-                items2 = items2.Where(u => allowedIds.Contains(u.Id)).ToList();
-            }
-            return items2;
+            return await GetAllWithOuthPhoto(includeBlocked: true);
         }
 
 
 
         #region Giriş yapan kullanıcı veya şifre işlemleri
-        [HttpGet("GetUser")]
-        public ActionResult<LoginUserDto> GetUser()
+        // JWT token'dan kullanıcı bilgilerini getirir
+        [HttpGet("GetCurrentUserFromToken")]
+        public ActionResult<LoginUserDto> GetCurrentUserFromToken()
         {
 
             var authorizationHeader = HttpContext.Request.Headers["Authorization"].FirstOrDefault();
@@ -657,7 +479,7 @@ namespace formneo.api.Controllers
             utils.Utils.SendMail($"{subject}", emailBody, toList, null, false);
         }
 
-        private async Task SendUserInfoMail(CreateMailUserDto dto, List<string> toList, string subject)
+            private async Task SendUserInfoMail(CreateMailUserDto dto, List<string> toList, string subject)
         {
             string dbName = _dbNameHelper.GetDatabaseName();
             string emailBody = $@"
@@ -714,49 +536,149 @@ namespace formneo.api.Controllers
 
         #endregion
 
-        // Giriş yapan kullanıcının şirketini getirir
-        [HttpGet("UserCompany")]
-        public async Task<ActionResult<UserAppDto>> GetUserUserCompany()
+        // Giriş yapan kullanıcının temel bilgilerini getirir
+        [HttpGet("GetCurrentUserBasic")]
+        public async Task<ActionResult<UserAppDto>> GetCurrentUserBasic()
         {
             var loginName = User.Identity.Name;
 
-            var loginUser = _userManager.Users.Where(e => e.Email == loginName).Select(e => new { e.Id, e.FirstName, e.LastName, e.WorkCompanyId }).FirstOrDefault();
+            var loginUser = await _userManager.Users
+                .Where(e => e.Email == loginName)
+                .Select(e => new { e.Id, e.FirstName, e.LastName })
+                .FirstOrDefaultAsync();
+
+            if (loginUser == null)
+            {
+                return NotFound("User not found");
+            }
 
             var sendData = new UserAppDto
             {
                 Id = loginUser.Id,
                 FirstName = loginUser.FirstName,
-                LastName = loginUser.LastName,
-                WorkCompanyId = loginUser.WorkCompanyId.ToString()
+                LastName = loginUser.LastName
             };
             return Ok(sendData);
         }
 
-        // Giriş yapan kullanıcının departmanını getirir
-        [HttpGet("UserDepartment")]
-        public async Task<ActionResult<TicketDepartmensListDto>> GetUserUserDepartment()
+        // Backward compatibility için eski endpoint
+        [HttpGet("UserCompany")]
+        public async Task<ActionResult<UserAppDto>> GetUserUserCompany()
         {
-            var loginName = User.Identity.Name;
+            return await GetCurrentUserBasic();
+        }
 
-            var loginUser = await _userManager.Users
-      .Where(e => e.Email == loginName)
-      .Select(e => new { e.TicketDepartmentId })
-      .FirstOrDefaultAsync();
-
-            var departments = await _ticketDepartments.Include();
-
-            var department = departments
-                   .Where(td => td.Id == loginUser.TicketDepartmentId).FirstOrDefault();
-
-            if (department == null)
+        // Kullanıcının aktif organizasyon bilgisini getirir
+        [HttpGet("GetCurrentUserActiveOrganization/{userId?}")]
+        public async Task<ActionResult<EmployeeAssignmentListDto>> GetCurrentUserActiveOrganization(string userId = null)
+        {
+            string targetUserId;
+            
+            if (string.IsNullOrWhiteSpace(userId))
             {
-                return null;
+                // userId verilmemişse, giriş yapan kullanıcının bilgilerini getir
+                var loginName = User.Identity.Name;
+                if (string.IsNullOrEmpty(loginName))
+                {
+                    return Unauthorized("User not authenticated");
+                }
+
+                var loginUser = await _userManager.Users
+                    .Where(e => e.Email == loginName)
+                    .FirstOrDefaultAsync();
+
+                if (loginUser == null)
+                {
+                    return NotFound("User not found");
+                }
+
+                targetUserId = loginUser.Id;
+            }
+            else
+            {
+                // userId verilmişse, o kullanıcının bilgilerini getir
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return NotFound("User not found");
+                }
+                targetUserId = userId;
             }
 
-            var departmentDto = _mapper.Map<TicketDepartmensListDto>(department);
+            // Aktif EmployeeAssignment'ı bul (tüm navigation property'lerle birlikte)
+            var assignmentsQuery = await _employeeAssignmentService.Include();
+            var now = DateTime.UtcNow;
+            var activeAssignment = await assignmentsQuery
+                .Where(ea => ea.UserId == targetUserId
+                    && ea.AssignmentType == formneo.core.Models.AssignmentType.Primary
+                    && ea.StartDate <= now
+                    && (ea.EndDate == null || ea.EndDate > now))
+                .Include(ea => ea.User)
+                .Include(ea => ea.OrgUnit)
+                .Include(ea => ea.Position)
+                .Include(ea => ea.Manager)
+                .OrderByDescending(ea => ea.StartDate)
+                .FirstOrDefaultAsync();
 
-            return Ok(departmentDto);
+            if (activeAssignment == null)
+            {
+                return NotFound("Active organization assignment not found");
+            }
 
+            var result = _mapper.Map<EmployeeAssignmentListDto>(activeAssignment);
+            return Ok(result);
+        }
+
+        // Kullanıcının tüm organizasyon geçmişini getirir
+        [HttpGet("GetCurrentUserOrganizationHistory/{userId?}")]
+        public async Task<ActionResult<List<EmployeeAssignmentListDto>>> GetCurrentUserOrganizationHistory(string userId = null)
+        {
+            string targetUserId;
+            
+            if (string.IsNullOrWhiteSpace(userId))
+            {
+                // userId verilmemişse, giriş yapan kullanıcının bilgilerini getir
+                var loginName = User.Identity.Name;
+                if (string.IsNullOrEmpty(loginName))
+                {
+                    return Unauthorized("User not authenticated");
+                }
+
+                var loginUser = await _userManager.Users
+                    .Where(e => e.Email == loginName)
+                    .FirstOrDefaultAsync();
+
+                if (loginUser == null)
+                {
+                    return NotFound("User not found");
+                }
+
+                targetUserId = loginUser.Id;
+            }
+            else
+            {
+                // userId verilmişse, o kullanıcının bilgilerini getir
+                var user = await _userManager.FindByIdAsync(userId);
+                if (user == null)
+                {
+                    return NotFound("User not found");
+                }
+                targetUserId = userId;
+            }
+
+            // Tüm EmployeeAssignment'ları getir (geçmiş ve aktif)
+            var assignmentsQuery = await _employeeAssignmentService.Include();
+            var allAssignments = await assignmentsQuery
+                .Where(ea => ea.UserId == targetUserId)
+                .Include(ea => ea.User)
+                .Include(ea => ea.OrgUnit)
+                .Include(ea => ea.Position)
+                .Include(ea => ea.Manager)
+                .OrderByDescending(ea => ea.StartDate) // En yeni önce
+                .ToListAsync();
+
+            var result = _mapper.Map<List<EmployeeAssignmentListDto>>(allAssignments);
+            return Ok(result);
         }
 
         // Kullanıcı seviyelerini getirir

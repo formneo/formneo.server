@@ -48,8 +48,7 @@ namespace formneo.api.Controllers
                  Id = e.Id,
                  Name = e.Name,
                  Description = e.Description,
-                 CustomerRefId = e.CustomerRefId,
-                 CustomerName = e.CustomerRef.Name, 
+                 ParentPositionId = e.ParentPositionId
              }).ToList();
 
             return Ok(_mapper.Map<List<PositionListDto >>(list));
@@ -60,14 +59,13 @@ namespace formneo.api.Controllers
         {
             var service = await _positionsService.Include();
             var list = service
-                .Where(e=>e.CustomerRefId == id)
+                .Where(e=>e.MainClientId == id)
              .Select(e => new PositionListDto
              {
                  Id = e.Id,
                  Name = e.Name,
                  Description = e.Description,
-                 CustomerRefId = e.CustomerRefId,
-                 CustomerName = e.CustomerRef.Name,
+                 ParentPositionId = e.ParentPositionId
              }).ToList();
 
             return Ok(_mapper.Map<List<PositionListDto>>(list));
@@ -84,8 +82,7 @@ namespace formneo.api.Controllers
                  Id = e.Id,
                  Name = e.Name,
                  Description = e.Description,
-                 CustomerRefId = e.CustomerRefId,
-                 CustomerName = e.CustomerRef.Name,
+                 ParentPositionId = e.ParentPositionId
              }).FirstOrDefault();
 
             return Ok(_mapper.Map<PositionListDto>(pos));         
@@ -122,7 +119,7 @@ namespace formneo.api.Controllers
 
                 exist.Name = dto.Name;
                 exist.Description = dto.Description;
-                exist.CustomerRefId = dto.CustomerRefId;
+                exist.ParentPositionId = dto.ParentPositionId;
                 await _positionsService.UpdateAsync(_mapper.Map<PositionListDto>(exist));
 
                 return Ok("Updated successfully.");

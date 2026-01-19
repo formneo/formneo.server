@@ -39,13 +39,10 @@ namespace formneo.core.DTOs.UserTenants
         public bool canEditTicket { get; set; }
         public bool DontApplyDefaultFilters { get; set; }
 
-        public Guid? mainManagerUserAppId { get; set; }
-
         public string? PCname { get; set; }
-        public string? manager1 { get; set; }
-        public string? manager2 { get; set; }
 
         // Reset şifre alanları tenant-bazlı değildir
+        // Manager bilgisi UserApp.ManagerId'den alınır (Single Source of Truth)
     }
 
     public class UserTenantInsertDto
@@ -63,13 +60,10 @@ namespace formneo.core.DTOs.UserTenants
         public bool canEditTicket { get; set; }
         public bool DontApplyDefaultFilters { get; set; }
 
-        public Guid? mainManagerUserAppId { get; set; }
-
         public string? PCname { get; set; }
-        public string? manager1 { get; set; }
-        public string? manager2 { get; set; }
 
         // Reset şifre alanları tenant-bazlı değildir
+        // Manager bilgisi UserApp.ManagerId'den alınır (Single Source of Truth)
     }
 
     public class UserTenantUpdateDto
@@ -86,13 +80,10 @@ namespace formneo.core.DTOs.UserTenants
         public bool canEditTicket { get; set; }
         public bool DontApplyDefaultFilters { get; set; }
 
-        public Guid? mainManagerUserAppId { get; set; }
-
         public string? PCname { get; set; }
-        public string? manager1 { get; set; }
-        public string? manager2 { get; set; }
 
         // Reset şifre alanları tenant-bazlı değildir
+        // Manager bilgisi UserApp.ManagerId'den alınır (Single Source of Truth)
     }
 
     // Kaldırıldı: sadece tek tenant-çoklu user senaryosu desteklenecek
@@ -127,12 +118,9 @@ namespace formneo.core.DTOs.UserTenants
         public bool canEditTicket { get; set; }
         public bool DontApplyDefaultFilters { get; set; }
 
-        public Guid? mainManagerUserAppId { get; set; }
-
         public string? PCname { get; set; }
-        public string? manager1 { get; set; }
-        public string? manager2 { get; set; }
 
+        // Manager bilgisi UserApp.ManagerId'den alınır (Single Source of Truth)
         // Admin flag
         public bool IsTenantAdmin { get; set; }
 

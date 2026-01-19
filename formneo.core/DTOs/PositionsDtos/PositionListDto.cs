@@ -8,7 +8,6 @@ namespace formneo.core.DTOs.PositionsDtos
         public Guid Id { get; set; }
         public string Name { get; set; }
         public string? Description { get; set; } = null;
-        public Guid? CustomerRefId { get; set; } = null;
-        public string? CustomerName { get; set; } = null;
+        public Guid? ParentPositionId { get; set; } = null;
     }
 }

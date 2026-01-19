@@ -32,15 +32,11 @@ namespace formneo.core.DTOs
         public string? InstagramUrl { get; set; }
         public string? TwitterUrl { get; set; }
         public string? LinkedinUrl { get; set; }
-        public string? manager1 { get; set; }
-        public string? manager2 { get; set; }
         public string? Title { get; set; }
-        public string? SAPDepartmentText { get; set; }
-        public string? SAPPositionText { get; set; }
-        public Guid? DepartmentId { get; set; }
-        public Guid? TicketDepartmentId { get; set; }
+        public Guid? OrgUnitId { get; set; }
+        public string? OrgUnitName { get; set; }
+        public string? ManagerId { get; set; }
         public List<UserRoleDto> Roles { get; set; }
-        public string WorkCompanyId { get; set; }
         // tenant-bazlı alanlar UserTenant DTO’larına taşındı
         public string? ResetPasswordCode { get; set; }
         public DateTime? ResetCodeExpiry { get; set; }
@@ -70,20 +66,11 @@ namespace formneo.core.DTOs
         public string? InstagramUrl { get; set; }
         public string? TwitterUrl { get; set; }
         public string? LinkedinUrl { get; set; }
-        public string? manager1 { get; set; }
-        public string? manager2 { get; set; }
         public string? Title { get; set; }
-        public string? SAPDepartmentText { get; set; }
-        public string? SAPPositionText { get; set; }
-        public Guid? DepartmentId { get; set; }
-        public Guid? TicketDepartmentId { get; set; }
+        public Guid? OrgUnitId { get; set; }
+        public string? OrgUnitName { get; set; }
+        // Manager bilgisi OrgUnit.ManagerId'den alınır: user.OrgUnit?.Manager
         public List<UserRoleDto> Roles { get; set; }
-
-        public string WorkCompanyId { get; set; }
-
-        public string DepartmentText { get; set; }
-
-        public string WorkCompanyText { get; set; }
         // tenant-bazlı alanlar UserTenant DTO’larına taşındı
         public Guid? PositionId { get; set; }
         public UserLevel UserLevel { get; set; }

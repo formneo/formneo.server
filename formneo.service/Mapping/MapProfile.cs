@@ -21,6 +21,8 @@ using formneo.core.DTOs.FormDatas;
 using formneo.core.DTOs.Inventory;
 using formneo.core.DTOs.Kanban;
 using formneo.core.DTOs.Menu;
+using formneo.core.DTOs.OrgUnits;
+using formneo.core.DTOs.EmployeeAssignments;
 using formneo.core.DTOs.PCTrack;
 using formneo.core.DTOs.Plants;
 using formneo.core.DTOs.PositionsDtos;
@@ -64,14 +66,15 @@ namespace formneo.service.Mapping
             CreateMap<Departments, DepartmentsListDto>().ReverseMap();
 
 
-            CreateMap<UserApp, UserAppDto>().ReverseMap();
+            CreateMap<UserApp, UserAppDto>()
+	            // NOT: OrgUnit ve WorkCompany kaldırıldı
+	            // OrgUnitName artık EmployeeAssignment tablosundan alınmalı
+	            .ReverseMap();
 
             CreateMap<UserApp, CreateUserDto>().ReverseMap();
             CreateMap<UserApp, UpdateUserDto>().ReverseMap();
-            // WorkFlowDefinationDto: Entity -> DTO'da Defination exclude edilir (performans için)
-            // DTO -> Entity mapping'i kullanılmıyor (Save/Update için InsertDto/UpdateDto kullanılıyor)
-            CreateMap<WorkFlowDefination, WorkFlowDefinationDto>()
-                .ForMember(dest => dest.Defination, opt => opt.Ignore());
+            CreateMap<WorkFlowDefination, WorkFlowDefinationDto>().ReverseMap();
+            CreateMap<WorkFlowDefination, WorkFlowDefinationDto>().ReverseMap();
             CreateMap<ApproveItems, ApproveItemsDto>().ReverseMap();
             CreateMap<FormItems, FormItemsDto>()
                 .ForMember(dest => dest.WorkFlowHead, opt => opt.MapFrom(src => src.WorkflowItem != null ? src.WorkflowItem.WorkflowHead : null))
@@ -108,7 +111,9 @@ namespace formneo.service.Mapping
             CreateMap<Positions, PositionListDto>().ReverseMap();
 
 
-            CreateMap<UserAppDtoWithoutPhoto, UserApp>().ReverseMap();
+            CreateMap<UserAppDtoWithoutPhoto, UserApp>()
+                // NOT: OrgUnit kaldırıldı
+                .ReverseMap();
             CreateMap<UserAppDtoWithoutPhoto, UserAppDto>().ReverseMap();
 
 
@@ -166,9 +171,7 @@ namespace formneo.service.Mapping
             CreateMap<WorkFlowItemDtoWithApproveItems, WorkflowItem>().ReverseMap();
 
 
-            CreateMap<WorkFlowDefination, WorkFlowDefinationListDto>();
             CreateMap<WorkFlowDefinationListDto, WorkFlowDefination>().ReverseMap();
-            CreateMap<WorkFlowDefinationUpdateDto, WorkFlowDefination>().ReverseMap();
             CreateMap<WorkFlowDefinationInsertDto, WorkFlowDefination>().ReverseMap();
             CreateMap<WorkFlowDefinationUpdateDto, WorkFlowDefination>().ReverseMap();
 
@@ -200,6 +203,37 @@ namespace formneo.service.Mapping
             CreateMap<TicketDepartmensListDto, TicketDepartment>().ReverseMap();
             CreateMap<TicketDepartmensListDto, TicketDepartmensInsertDto>().ReverseMap();
             CreateMap<TicketDepartmensListDto, TicketDepartmensUpdateDto>().ReverseMap();
+
+            CreateMap<OrgUnit, OrgUnitListDto>().ReverseMap();
+            CreateMap<OrgUnitListDto, OrgUnitInsertDto>().ReverseMap();
+            CreateMap<OrgUnitListDto, OrgUnitUpdateDto>().ReverseMap();
+
+            // EmployeeAssignment mappings
+            CreateMap<EmployeeAssignment, EmployeeAssignmentListDto>()
+                .ForMember(dest => dest.UserFullName,
+                    opt => opt.MapFrom(src => src.User != null ? $"{src.User.FirstName} {src.User.LastName}".Trim() : null))
+                .ForMember(dest => dest.OrgUnitName,
+                    opt => opt.MapFrom(src => src.OrgUnit != null ? src.OrgUnit.Name : null))
+                .ForMember(dest => dest.PositionName,
+                    opt => opt.MapFrom(src => src.Position != null ? src.Position.Name : null))
+                .ForMember(dest => dest.ManagerFullName,
+                    opt => opt.MapFrom(src => src.Manager != null ? $"{src.Manager.FirstName} {src.Manager.LastName}".Trim() : null))
+                .ForMember(dest => dest.IsActive,
+                    opt => opt.MapFrom(src => src.EndDate == null || src.EndDate > DateTime.UtcNow))
+                .ForMember(dest => dest.AssignmentTypeText,
+                    opt => opt.MapFrom(src => src.AssignmentType == AssignmentType.Primary ? "Ana Atama" :
+                        src.AssignmentType == AssignmentType.Secondary ? "İkincil Atama" :
+                        src.AssignmentType == AssignmentType.Temporary ? "Geçici Atama" :
+                        src.AssignmentType == AssignmentType.Matrix ? "Matrix Atama" :
+                        "Bilinmeyen"))
+                .ReverseMap()
+                .ForMember(dest => dest.User, opt => opt.Ignore())
+                .ForMember(dest => dest.OrgUnit, opt => opt.Ignore())
+                .ForMember(dest => dest.Position, opt => opt.Ignore())
+                .ForMember(dest => dest.Manager, opt => opt.Ignore());
+
+            CreateMap<EmployeeAssignmentListDto, EmployeeAssignmentInsertDto>().ReverseMap();
+            CreateMap<EmployeeAssignmentListDto, EmployeeAssignmentUpdateDto>().ReverseMap();
 
             CreateMap<DepartmentUserListDto, DepartmentUser>().ReverseMap();
             CreateMap<DepartmentUserListDto, DepartmentUserInsertDto>().ReverseMap();

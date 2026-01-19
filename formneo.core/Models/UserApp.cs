@@ -33,30 +33,19 @@ namespace formneo.core.Models
         public string? LinkedinUrl { get; set; }
         public string? photo { get; set; }
 
-        public string? Department { get; set; }
-
-        public string? SAPDepartmentText { get; set; }
-        public string? SAPPositionText { get; set; }
-
-        [ForeignKey("TicketDepartment")]
-        public Guid? TicketDepartmentId { get; set; }
-        public virtual TicketDepartment? TicketDepartment { get; set; }
-
-
-        [ForeignKey("WorkCompany")]
-        public Guid? WorkCompanyId { get; set; }
-        public virtual WorkCompany? WorkCompany { get; set; }
+        // NOT: OrgUnitId, PositionId ve ManagerId artık EmployeeAssignment tablosunda tutuluyor
+        // Aktif atama için: EmployeeAssignment tablosundan alınmalı
 
         // tenant-bazlı alanlar UserTenant'a taşındı
         public string? ResetPasswordCode { get; set; }
         public DateTime? ResetCodeExpiry { get; set; }
         // tenant-bazlı alanlar UserTenant'a taşındı
-
-
-        [ForeignKey("Positions")]
-        public Guid? PositionId { get; set; }
-        public virtual Positions? Positions { get; set; }
         public virtual List<DepartmentUser> DepartmentUsers { get; set; } = new List<DepartmentUser>();
+
+        /// <summary>
+        /// Kullanıcının tüm atamaları (geçmiş ve aktif)
+        /// </summary>
+        public virtual List<EmployeeAssignment> EmployeeAssignments { get; set; } = new List<EmployeeAssignment>();
 
         public UserLevel UserLevel { get; set; }
 

@@ -1,5 +1,7 @@
 ﻿
 using Microsoft.AspNetCore.Mvc.Routing;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
@@ -8,6 +10,8 @@ using System.Net;
 using System.Reflection.Metadata;
 using formneo.core.Models;
 using formneo.core.Services;
+using formneo.core.Helpers;
+using formneo.core.DTOs.EmployeeAssignments;
 using formneo.workflow;
 using Microsoft.AspNetCore.Mvc;
 using formneo.core.Operations;
@@ -20,6 +24,7 @@ using JsonLogic.Net;
 using static System.Runtime.InteropServices.JavaScript.JSType;
 using Jint;
 using Jint.Native;
+using NLayer.Core.Services;
 
 public class WorkflowNode
 {
@@ -164,7 +169,7 @@ public class Workflow
     /// </summary>
     public string _Action { get; set; }
 
-    public void Start(string apiSendUser, string payloadJson, string action = "")
+    public async Task Start(string apiSendUser, string payloadJson, string action = "")
     {
         _ApiSendUser = apiSendUser;
         _payloadJson = payloadJson;
@@ -179,10 +184,10 @@ public class Workflow
         }
 
         // StartNode'dan başla - action formNode'a gelince kullanılacak
-        ExecuteNode(startNode.Id, "");
+        await ExecuteNode(startNode.Id, "");
     }
 
-    public void Continue(WorkflowItem workfLowItem, string nodeId, string apiSendUser, string Parameter = "", WorkflowHead head = null, WorkFlowDefination defination = null,string payloadJson=null)
+    public async Task Continue(WorkflowItem workfLowItem, string nodeId, string apiSendUser, string Parameter = "", WorkflowHead head = null, WorkFlowDefination defination = null,string payloadJson=null)
     {
 
 
@@ -200,11 +205,11 @@ public class Workflow
 
 
         // İlk düğümü çalıştırın
-        ExecuteNode(startNode.Id, Parameter, workfLowItem);
+        await ExecuteNode(startNode.Id, Parameter, workfLowItem);
 
     }
 
-    private void ExecuteNode(string nodeId, string Parameter = "", WorkflowItem workflowItem =null)
+    private async Task ExecuteNode(string nodeId, string Parameter = "", WorkflowItem workflowItem =null)
     {
 
         _ApiSendUser = _ApiSendUser;
@@ -230,7 +235,7 @@ public class Workflow
 
             if (nextNode != "" && nextNode != null)
             {
-                ExecuteNode(nextNode);
+                await ExecuteNode(nextNode);
 
             }
             else
@@ -246,7 +251,7 @@ public class Workflow
 
             if (nextNode != "" && nextNode != null)
             {
-                ExecuteNode(nextNode);
+                await ExecuteNode(nextNode);
 
             }
             else
@@ -262,7 +267,7 @@ public class Workflow
 
             if (nextNode != "" && nextNode != null)
             {
-                ExecuteNode(nextNode);
+                await ExecuteNode(nextNode);
             }
             else
             {
@@ -272,11 +277,11 @@ public class Workflow
         
         if (result.NodeType == "approverNode")
         {
-            string nextNode = ExecuteApprove(currentNode, result, Parameter);
+            string nextNode = await ExecuteApprove(currentNode, result, Parameter);
 
             if (nextNode != "" && nextNode != null)
             {
-                ExecuteNode(nextNode);
+                await ExecuteNode(nextNode);
 
             }
             else
@@ -291,7 +296,7 @@ public class Workflow
 
             if (nextNode != "" && nextNode != null)
             {
-                ExecuteNode(nextNode);
+                await ExecuteNode(nextNode);
             }
             else
             {
@@ -304,7 +309,7 @@ public class Workflow
 
             if (nextNode != "" && nextNode != null)
             {
-                ExecuteNode(nextNode);
+                await ExecuteNode(nextNode);
             }
             else
             {
@@ -320,7 +325,7 @@ public class Workflow
 
             if (nextNode != "" && nextNode != null)
             {
-                ExecuteNode(nextNode);
+                await ExecuteNode(nextNode);
             }
             else
             {
@@ -407,7 +412,7 @@ public class Workflow
         return nextNode;
     }
 
-    private  string ExecuteApprove(WorkflowNode currentNode,WorkflowItem workFlowItem ,string parameter)
+    private async Task<string> ExecuteApprove(WorkflowNode currentNode,WorkflowItem workFlowItem ,string parameter)
     {
         //too
 
@@ -421,12 +426,63 @@ public class Workflow
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Pending;
             if (currentNode.Data.isManager == true)
             {
-                var x = _ApiSendUser;
-
-                PositionCreateRunner runner = new PositionCreateRunner();
-                string managerId = runner.GetManagerId(_ApiSendUser).Result.ToString();
-                var managerDisplayName =  runner.GetManagerDisplayName(managerId).Result.ToString();
-                workFlowItem.approveItems.Add(new ApproveItems { ApproveUser = managerId, WorkFlowDescription = "", ApproveUserNameSurname = managerDisplayName });
+                // Manager bilgisi EmployeeAssignment.ManagerId'den alınır (Effective Dating Pattern)
+                if (_parameters?.UserManager != null && 
+                    _parameters?.EmployeeAssignmentService != null && 
+                    !string.IsNullOrEmpty(_ApiSendUser))
+                {
+                    try
+                    {
+                        // Aktif atamayı bul (tenant filtresi otomatik)
+                        var assignmentsQuery = await _parameters.EmployeeAssignmentService.Include();
+                        var activeAssignment = await EmployeeAssignmentHelper
+                            .GetActiveAssignmentAsync(assignmentsQuery, _ApiSendUser);
+                        
+                        if (activeAssignment?.Manager != null)
+                        {
+                            var manager = activeAssignment.Manager;
+                            string managerDisplayName = $"{manager.FirstName} {manager.LastName}".Trim();
+                            workFlowItem.approveItems.Add(new ApproveItems 
+                            { 
+                                ApproveUser = manager.Id, 
+                                WorkFlowDescription = "", 
+                                ApproveUserNameSurname = managerDisplayName 
+                            });
+                            return "";
+                        }
+                        else if (activeAssignment?.OrgUnit?.Manager != null)
+                        {
+                            // Fallback: Eğer EmployeeAssignment'da ManagerId yoksa, OrgUnit.ManagerId kullan
+                            var manager = activeAssignment.OrgUnit.Manager;
+                            string managerDisplayName = $"{manager.FirstName} {manager.LastName}".Trim();
+                            workFlowItem.approveItems.Add(new ApproveItems 
+                            { 
+                                ApproveUser = manager.Id, 
+                                WorkFlowDescription = "", 
+                                ApproveUserNameSurname = managerDisplayName 
+                            });
+                            return "";
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        // Hata durumunda log ve fallback
+                        workFlowItem.approveItems.Add(new ApproveItems 
+                        { 
+                            ApproveUser = null, 
+                            WorkFlowDescription = $"Manager lookup hatası: {ex.Message}", 
+                            ApproveUserNameSurname = "" 
+                        });
+                        return "";
+                    }
+                }
+                // Manager bulunamazsa boş bırak
+                workFlowItem.approveItems.Add(new ApproveItems 
+                { 
+                    ApproveUser = null, 
+                    WorkFlowDescription = "Aktif atama veya yönetici bulunamadı", 
+                    ApproveUserNameSurname = "" 
+                });
                 return "";
             }
             else

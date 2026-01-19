@@ -57,12 +57,7 @@ namespace formneo.api.Controllers
                 TwitterUrl = user.Data.TwitterUrl,
                 LinkedinUrl = user.Data.LinkedinUrl,
                 Title = user.Data.Title,
-                SAPDepartmentText = user.Data.SAPDepartmentText,
-                SAPPositionText = user.Data.SAPPositionText,
-                DepartmentsId = user.Data.DepartmentId,
-                TicketDepartmentId = user.Data.TicketDepartmentId,
                 RoleIds = user.Data.Roles,
-                WorkCompanyId = user.Data.WorkCompanyId,
 
                 ResetPasswordCode = resetCode,
                 ResetCodeExpiry = resetCodeExpiry

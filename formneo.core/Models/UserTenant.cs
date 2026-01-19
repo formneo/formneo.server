@@ -24,13 +24,10 @@ namespace formneo.core.Models
         public bool canEditTicket { get; set; }
         public bool DontApplyDefaultFilters { get; set; }
 
-        public Guid? mainManagerUserAppId { get; set; }
-
         public string? PCname { get; set; }
-        public string? manager1 { get; set; }
-        public string? manager2 { get; set; }
 
         // Reset şifre alanları tenant-bazlı değildir; UserApp üzerinde tutulur
+        // Manager bilgisi UserApp.ManagerId'den alınır (Single Source of Truth)
     }
 }
 

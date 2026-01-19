@@ -57,6 +57,8 @@ namespace formneo.repository
         public DbSet<TicketRuleEngine> TicketRuleEngine { get; set; }
 
         public DbSet<TicketDepartment> TicketDepartment { get; set; }
+        public DbSet<OrgUnit> OrgUnits { get; set; }
+        public DbSet<EmployeeAssignment> EmployeeAssignments { get; set; }
         public DbSet<AspNetRolesMenu> AspNetRolesMenu { get; set; }
         public DbSet<AspNetRolesTenantMenu> AspNetRolesTenantMenu { get; set; }
         public DbSet<AspNetRolesTenantForm> AspNetRolesTenantForm { get; set; }
@@ -194,6 +196,20 @@ namespace formneo.repository
             .WithMany() // UserApp tarafında ters bir koleksiyon tanımlamıyorsanız WithMany boş bırakılır
             .HasForeignKey(td => td.ManagerId)
             .OnDelete(DeleteBehavior.Restrict); // İlişki silinme davranışı
+
+            modelBuilder.Entity<OrgUnit>()
+                .HasOne(ou => ou.ParentOrgUnit)
+                .WithMany(ou => ou.SubOrgUnits)
+                .HasForeignKey(ou => ou.ParentOrgUnitId);
+
+            modelBuilder.Entity<OrgUnit>()
+                .HasOne(ou => ou.Manager)
+                .WithMany()
+                .HasForeignKey(ou => ou.ManagerId);
+
+            // NOT: UserApp.OrgUnitId ve OrgUnit navigation property kaldırıldı
+            // Organizasyon bilgileri artık EmployeeAssignment tablosunda tutuluyor
+            // Manager bilgisi EmployeeAssignment.ManagerId veya OrgUnit.ManagerId'den alınır
 
 
             foreach (var entityType in modelBuilder.Model.GetEntityTypes())

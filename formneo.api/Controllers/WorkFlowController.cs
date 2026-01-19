@@ -1,6 +1,7 @@
 ﻿using AutoMapper;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json.Linq;
@@ -13,6 +14,7 @@ using formneo.core.DTOs.Budget.JobCodeRequest;
 using formneo.core.Models;
 using formneo.core.Operations;
 using formneo.core.Services;
+using formneo.core.DTOs.EmployeeAssignments;
 using formneo.service.Services;
 using formneo.workflow;
 using formneo.workflow.Services;
@@ -37,6 +39,8 @@ namespace formneo.api.Controllers
         private readonly ITicketServices _ticketService;
         private readonly IFormService _formService;
         private readonly WorkflowResponseBuilder _responseBuilder;
+        private readonly UserManager<UserApp> _userManager;
+        private readonly IServiceWithDto<EmployeeAssignment, EmployeeAssignmentListDto> _employeeAssignmentService;
         
         public WorkFlowController(
             IMapper mapper, 
@@ -49,7 +53,9 @@ namespace formneo.api.Controllers
             IServiceWithDto<WorkflowHead, WorkFlowHeadDto> workFlowHeadService, 
             IServiceWithDto<WorkflowItem, WorkFlowItemDto> workFlowItemService, 
             ITicketServices ticketServices,
-            IFormService formService)
+            IFormService formService,
+            UserManager<UserApp> userManager,
+            IServiceWithDto<EmployeeAssignment, EmployeeAssignmentListDto> employeeAssignmentService)
         {
             _mapper = mapper;
             _service = workFlowService;
@@ -62,6 +68,8 @@ namespace formneo.api.Controllers
             _workFlowItemService = workFlowItemService;
             _ticketService = ticketServices;
             _formService = formService;
+            _userManager = userManager;
+            _employeeAssignmentService = employeeAssignmentService;
             _responseBuilder = new WorkflowResponseBuilder(mapper);
         }
         [HttpPost]
@@ -79,6 +87,8 @@ namespace formneo.api.Controllers
             parameters._formInstanceService = _formInstanceService;
             parameters._formService = _formService;
             parameters._ticketService = _ticketService;
+            parameters.UserManager = _userManager;
+            parameters.EmployeeAssignmentService = _employeeAssignmentService;
 
 
             workFlowApiDto.UserName = User.Identity.Name;
@@ -90,7 +100,7 @@ namespace formneo.api.Controllers
             workFlowDto.WorkFlowDefinationId = workFlowHead.Data.WorkFlowDefinationId;
             workFlowDto.NodeId = workFlowItem.Id.ToString();
             workFlowDto.WorkFlowId = workFlowItem.WorkflowHeadId.ToString(); ;
-            workFlowDto.ApproverItemId = workFlowApiDto.ApproveItem; // Nullable - sadece approverNode için gerekli
+            workFlowDto.ApproverItemId = workFlowApiDto.ApproveItem;
             // Artık Input yerine Action kullanılıyor (buton bazlı sistem)
             workFlowDto.Action = workFlowApiDto.Action;
             workFlowDto.UserName = workFlowApiDto.UserName;
@@ -121,6 +131,8 @@ namespace formneo.api.Controllers
             parameters._formItemsService = _formItemsService;
             parameters._formInstanceService = _formInstanceService;
             parameters._formService = _formService;
+            parameters.UserManager = _userManager;
+            parameters.EmployeeAssignmentService = _employeeAssignmentService;
 
             workFlowDto.WorkFlowDefinationId = new Guid(workFlowApiDto.DefinationId);
             workFlowDto.UserName = workFlowApiDto.UserName ?? User.Identity.Name;
@@ -152,6 +164,8 @@ namespace formneo.api.Controllers
             parameters._formItemsService = _formItemsService;
             parameters._formInstanceService = _formInstanceService;
             parameters._formService = _formService;
+            parameters.UserManager = _userManager;
+            parameters.EmployeeAssignmentService = _employeeAssignmentService;
             workFlowApiDto.UserName = User.Identity.Name;
 
             workFlowDto.WorkFlowDefinationId = new Guid(workFlowApiDto.DefinationId);
@@ -512,33 +526,6 @@ namespace formneo.api.Controllers
                     }
                 }
 
-                // Workflow definition JSON'dan fieldScript'i al
-                string fieldScript = null;
-                if (workflowItem.WorkflowHead != null && !string.IsNullOrEmpty(workflowItem.WorkflowHead.WorkFlowDefinationJson))
-                {
-                    try
-                    {
-                        var workflowDefinition = JObject.Parse(workflowItem.WorkflowHead.WorkFlowDefinationJson);
-                        var nodes = workflowDefinition["nodes"] as JArray;
-                        if (nodes != null && !string.IsNullOrEmpty(workflowItem.NodeId))
-                        {
-                            var nodeDefinition = nodes.FirstOrDefault(n => n["id"]?.ToString() == workflowItem.NodeId);
-                            if (nodeDefinition != null)
-                            {
-                                var nodeData = nodeDefinition["data"];
-                                if (nodeData != null)
-                                {
-                                    fieldScript = nodeData["fieldScript"]?.ToString();
-                                }
-                            }
-                        }
-                    }
-                    catch
-                    {
-                        // Parse hatası durumunda devam et, fieldScript null kalır
-                    }
-                }
-
                 taskFormDto = new TaskFormDto
                 {
                     NodeType = workflowItem.NodeType,
@@ -554,8 +541,7 @@ namespace formneo.api.Controllers
                     FormTaskMessage = formItem.FormTaskMessage,
                     FormDescription = formItem.FormDescription,
                     FormUser = formItem.FormUser,
-                    FormItemStatus = formItem.FormItemStatus,
-                    FieldScript = fieldScript
+                    FormItemStatus = formItem.FormItemStatus
                 };
             }
             else if (isApproverNode)

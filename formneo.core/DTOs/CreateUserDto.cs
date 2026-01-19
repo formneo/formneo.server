@@ -30,18 +30,13 @@ namespace formneo.core.DTOs
         public string? FacebookUrl { get; set; }
         public string? InstagramUrl { get; set; }
         public string? TwitterUrl { get; set; }
-        public string? Department { get; set; }
-        // tenant-bazlı alanlar UserTenant DTO’larına taşındı
+        // tenant-bazlı alanlar UserTenant DTO'larına taşındı
         public string? Title { get; set; }
         public string? LinkedinUrl { get; set; }
-        public string? SAPDepartmentText { get; set; }
-        public string? SAPPositionText { get; set; }
-        public Guid? DepartmentsId { get; set; }
-        public Guid? TicketDepartmentId { get; set; }
+        public Guid? OrgUnitId { get; set; }
+        // Manager bilgisi OrgUnit.ManagerId'den alınır: user.OrgUnit?.Manager
         // Kullanıcı oluşturulurken atanacak roller
         public List<UserRoleDto> RoleIds { get; set; }
-
-        public string? WorkCompanyId { get; set; }
 
         // tenant-bazlı alanlar UserTenant DTO’larına taşındı
 
@@ -72,18 +67,13 @@ namespace formneo.core.DTOs
         public string? FacebookUrl { get; set; }
         public string? InstagramUrl { get; set; }
         public string? TwitterUrl { get; set; }
-        public string? Department { get; set; }
-        // tenant-bazlı alanlar UserTenant DTO’larına taşındı
+        // tenant-bazlı alanlar UserTenant DTO'larına taşındı
         public string? Title { get; set; }
         public string? LinkedinUrl { get; set; }
-        public string? SAPDepartmentText { get; set; }
-        public string? SAPPositionText { get; set; }
-        public Guid? DepartmentsId { get; set; }
-        public Guid? TicketDepartmentId { get; set; }
+        public Guid? OrgUnitId { get; set; }
+        // Manager bilgisi OrgUnit.ManagerId'den alınır: user.OrgUnit?.Manager
         // Kullanıcı güncellenirken atanacak roller
         public List<UserRoleDto> RoleIds { get; set; }
-
-        public string? WorkCompanyId { get; set; }
 
         // tenant-bazlı alanlar UserTenant DTO’larına taşındı
         public Guid? PositionId { get; set; }

@@ -14,9 +14,8 @@ using NLayer.Core.Services;
 using System.Runtime.ConstrainedExecution;
 using formneo.core.DTOs;
 using formneo.core.DTOs.DepartmentUserDto;
-using formneo.core.DTOs.Ticket.TicketDepartments;
+using formneo.core.DTOs.OrgUnits;
 using formneo.core.Models;
-using formneo.core.Models.Ticket;
 using formneo.core.Services;
 
 namespace formneo.api.Controllers
@@ -27,12 +26,12 @@ namespace formneo.api.Controllers
     public class OrganizationController : CustomBaseController
     {
         private readonly IMapper _mapper;
-        private readonly IServiceWithDto<TicketDepartment, TicketDepartmensListDto> _ticketDepartments;
+        private readonly IServiceWithDto<OrgUnit, OrgUnitListDto> _orgUnits;
         private readonly UserManager<UserApp> _userManager;
-        public OrganizationController(IMapper mapper, IServiceWithDto<TicketDepartment, TicketDepartmensListDto> Service, IUserService userService, UserManager<UserApp> userManager)
+        public OrganizationController(IMapper mapper, IServiceWithDto<OrgUnit, OrgUnitListDto> orgUnits, UserManager<UserApp> userManager)
         {
             _mapper = mapper;
-            _ticketDepartments = Service;
+            _orgUnits = orgUnits;
             _userManager = userManager;
         }
 
@@ -41,43 +40,36 @@ namespace formneo.api.Controllers
         {
             try
             {
-                var loginName = User.Identity.Name;
-                var user = await _userManager.Users.Where(e => e.Email == loginName).Include(e => e.WorkCompany).FirstOrDefaultAsync();
-
-                var service = await _ticketDepartments.Include();
-                var departments = service.Where(e => e.WorkCompanyId == Guid.Parse("2e5c2ba5-3eb8-414d-8bc7-08dd44716854"))
+                var service = await _orgUnits.Include();
+                var orgUnits = service
                     .Include(e => e.Manager)
-                    .ThenInclude(e => e.Positions)
                     .ToList();
 
-                OrganizationDto result = new();
-
-                #region Statik Eklenen Alan (formneo şirketi, genel müdürlük)
-                // GENEL MÜDÜRLÜK EKLENDİ
-                var firstDepartment = departments.Where(e => e.Id == Guid.Parse("358da3ff-ea80-44da-bb42-33c849631456")).FirstOrDefault();
-                var firstDepartmentDto = new OrganizationDto
+                OrganizationDto result = new()
                 {
-                    Id = firstDepartment?.Id.ToString(),
-                    Name = firstDepartment?.DepartmentText,
+                    Id = "root",
+                    Name = "Organization",
                     Expanded = true,
-                    Type = "department",
-                    Children = new List<OrganizationDto>(),
+                    Type = "orgunit",
+                    Children = new List<OrganizationDto>()
                 };
-                // formneo DANIŞMANLIK EKLENDİ
-                var companyDto = new OrganizationDto
-                {
-                    Id = "2e5c2ba5-3eb8-414d-8bc7-08dd44716854",
-                    Name = "formneo Danışmanlık",
-                    Expanded = true,
-                    Type = "department",
-                    Children = new List<OrganizationDto>(),
-                };
-                result = companyDto;
-                result.Children.Add(firstDepartmentDto);
 
-                #endregion
-                var resultDto = await Recursive(firstDepartment.Id, result, departments);
-                return resultDto;
+                var rootUnits = orgUnits.Where(e => e.ParentOrgUnitId == null).ToList();
+                foreach (var unit in rootUnits)
+                {
+                    var unitDto = new OrganizationDto
+                    {
+                        Id = unit.Id.ToString(),
+                        Name = unit.Name,
+                        Expanded = true,
+                        Type = "orgunit",
+                        Children = new List<OrganizationDto>()
+                    };
+                    result.Children.Add(unitDto);
+                    await Recursive(unit.Id, result, orgUnits);
+                }
+
+                return result;
             }
             catch (Exception ex)
             {
@@ -85,92 +77,97 @@ namespace formneo.api.Controllers
             }
 
         }
-        private async Task<OrganizationDto> Recursive(Guid parentDptId, OrganizationDto result, List<TicketDepartment> departments)
+        private async Task<OrganizationDto> Recursive(Guid parentOrgUnitId, OrganizationDto result, List<OrgUnit> orgUnits)
         {
             try
             {
-                var service = await _ticketDepartments.Include();
-
-                // Üst departmanı parentDptId olan tüm departmanları al
-                var childDpts = departments
-                       .Where(e => e.ParentDepartmentId == parentDptId)
+                // Üst birimi parentOrgUnitId olan tüm birimleri al
+                var childUnits = orgUnits
+                       .Where(e => e.ParentOrgUnitId == parentOrgUnitId)
                        .Select(e => new OrganizationDto
                        {
                            Id = e.Id.ToString(),
-                           Name = e.DepartmentText,
+                           Name = e.Name,
                            Expanded = true,
-                           Type = "department",
+                           Type = "orgunit",
                            Children = new List<OrganizationDto>()
                        }).ToList();
 
-                // Departman yöneticisini bul ve child olarak ekle
-                var parentDptDto = FindById(result, parentDptId.ToString());
-                var managerDto = departments.Where(e => e.Id == parentDptId).Select(e => new OrganizationDto
+                // Birim yöneticisini bul ve child olarak ekle
+                var parentUnitDto = FindById(result, parentOrgUnitId.ToString());
+                var parentUnit = orgUnits.FirstOrDefault(e => e.Id == parentOrgUnitId);
+                var managerDto = parentUnit == null ? null : new OrganizationDto
                 {
-                    Id = e.ManagerId,
-                    Name = $"{e.Manager?.FirstName} {e.Manager?.LastName}".Trim(),
-                    Title = e.Manager?.Positions?.Name,
-                    Email = e.Manager?.Email,
-                    Photo = e.Manager?.photo,
+                    Id = parentUnit.ManagerId,
+                    Name = $"{parentUnit.Manager?.FirstName} {parentUnit.Manager?.LastName}".Trim(),
+                    // NOT: Position artık EmployeeAssignment tablosunda tutuluyor
+                    Title = null,
+                    Email = parentUnit.Manager?.Email,
+                    Photo = parentUnit.Manager?.photo,
                     Expanded = true,
                     ClassName = "manager-node",
                     Children = new List<OrganizationDto>()
-                }).FirstOrDefault();
+                };
 
-                if (parentDptDto != null)
+                if (parentUnitDto != null)
                 {
-                    if (parentDptDto.Children == null)
-                        parentDptDto.Children = new List<OrganizationDto>();
+                    if (parentUnitDto.Children == null)
+                        parentUnitDto.Children = new List<OrganizationDto>();
 
-                    parentDptDto.Children.Add(managerDto);
+                    if (managerDto != null)
+                        parentUnitDto.Children.Add(managerDto);
                 }
 
-                // Eğer alt departman yoksa
-                if (!childDpts.Any())
+                // Eğer alt birim yoksa
+                if (!childUnits.Any())
                 {
-                    if (parentDptDto != null && managerDto != null)
+                    if (parentUnitDto != null)
                     {
-                        // Departmanı bu parent olan kullanıcıları bul ve manager a child olarak ekle
-                        var depUsers = await _userManager.Users
-                         .Where(e => e.TicketDepartmentId == Guid.Parse(parentDptDto.Id) && e.Id != managerDto.Id)
-                         .Include(e => e.Positions)
-                         .ToListAsync();
-                        foreach (var user in depUsers)
-                        {
-                            var userDto = new OrganizationDto
-                            {
-                                Id = user.Id.ToString(),
-                                Name = $"{user.FirstName} {user.LastName}".Trim(),
-                                Title = user.Positions?.Name,
-                                Email = user.Email,
-                                Photo = user.photo,
-                                ClassName = user.Email == "murat.merdogan@formneo.com" ? "ceo-node" :
-                                           (user.Email == "murat.merdogan@formneo.com" || user.Email == "murat.merdogan@formneo.com") ? "executive-node" :
-                                           "employee-node",
-                                Children = new List<OrganizationDto>()
-                            };
+                        var attachNode = managerDto ?? parentUnitDto;
+                        if (attachNode.Children == null)
+                            attachNode.Children = new List<OrganizationDto>();
 
-                            if (managerDto.Children == null)
-                            {
-                                managerDto.Children = new List<OrganizationDto>();
-                            }
-                            managerDto.Children.Add(userDto);
-                        }
+                        // NOT: OrgUnitId kaldırıldı, EmployeeAssignment tablosu kullanılmalı
+                        // Şimdilik boş bırakılıyor - EmployeeAssignment ile join yapılmalı
+                        // var depUsers = await _userManager.Users
+                        //  .Where(e => e.OrgUnitId == parentOrgUnitId && (managerDto == null || e.Id != managerDto.Id))
+                        //  .ToListAsync();
+                        // foreach (var user in depUsers)
+                        // {
+                        //     var userDto = new OrganizationDto
+                        //     {
+                        //         Id = user.Id.ToString(),
+                        //         Name = $"{user.FirstName} {user.LastName}".Trim(),
+                        //         Title = null, // EmployeeAssignment'dan alınmalı
+                        //         Email = user.Email,
+                        //         Photo = user.photo,
+                        //         ClassName = user.Email == "murat.merdogan@formneo.com" ? "ceo-node" :
+                        //                    (user.Email == "murat.merdogan@formneo.com" || user.Email == "murat.merdogan@formneo.com") ? "executive-node" :
+                        //                    "employee-node",
+                        //         Children = new List<OrganizationDto>()
+                        //     };
+                        //     attachNode.Children.Add(userDto);
+                        // }
                     }
-                   
                 }
                 else
                 {
-                    foreach (var item in childDpts)
+                    foreach (var item in childUnits)
                     {
-                        // Alt departmanı ekle
+                        // Alt birimi ekle
                         if (managerDto != null)
                         {
                             if (managerDto.Children == null)
                                 managerDto.Children = new List<OrganizationDto>();
                             managerDto.Children.Add(item);
                         }
-                        await Recursive(Guid.Parse(item.Id), result, departments);
+                        else if (parentUnitDto != null)
+                        {
+                            if (parentUnitDto.Children == null)
+                                parentUnitDto.Children = new List<OrganizationDto>();
+                            parentUnitDto.Children.Add(item);
+                        }
+                        await Recursive(Guid.Parse(item.Id), result, orgUnits);
                     }
                 }
                 return result;
@@ -202,42 +199,38 @@ namespace formneo.api.Controllers
 
 
         [HttpGet("GetByDepartment")]
-        public async Task<ActionResult<OrganizationDto>> GetByDepartment([FromQuery] Guid dptId)
+        [HttpGet("GetByOrgUnit")]
+        public async Task<ActionResult<OrganizationDto>> GetByDepartment([FromQuery] Guid? orgUnitId, [FromQuery(Name = "dptId")] Guid? dptId)
         {
             try
             {
-                // Kullanıcı bilgisi (gerekirse kullanılır)
-                var loginName = User.Identity.Name;
-                var user = await _userManager.Users
-                    .Where(e => e.Email == loginName)
-                    .Include(e => e.WorkCompany)
-                    .FirstOrDefaultAsync();
+                var targetId = orgUnitId ?? dptId;
+                if (targetId == null)
+                    return BadRequest("Org unit id is required.");
 
-                // Tüm departmanları yükle
-                var service = await _ticketDepartments.Include();
-                var departments = service                    
-                    .Where(e => e.WorkCompanyId == Guid.Parse("2e5c2ba5-3eb8-414d-8bc7-08dd44716854"))
+                // Tüm org birimlerini yükle
+                var service = await _orgUnits.Include();
+                var orgUnits = service
                     .Include(e => e.Manager)
-                    .ThenInclude(m => m.Positions)
                     .ToList();
 
-                // Başlangıç departmanını bul
-                var rootDepartment = departments.Where(d => d.Id == dptId).FirstOrDefault();
-                if (rootDepartment == null)
-                    return NotFound("Department not found");
+                // Başlangıç birimini bul
+                var rootUnit = orgUnits.Where(d => d.Id == targetId).FirstOrDefault();
+                if (rootUnit == null)
+                    return NotFound("Org unit not found");
 
-                // Root departman DTO'su oluştur
+                // Root birim DTO'su oluştur
                 var rootDto = new OrganizationDto
                 {
-                    Id = rootDepartment.Id.ToString(),
-                    Name = rootDepartment.DepartmentText,
+                    Id = rootUnit.Id.ToString(),
+                    Name = rootUnit.Name,
                     Expanded = true,
-                    Type = "department",
+                    Type = "orgunit",
                     Children = new List<OrganizationDto>()
                 };
 
                 // Hiyerarşiyi oluştur
-                var result = await Recursive(rootDepartment.Id, rootDto, departments);
+                var result = await Recursive(rootUnit.Id, rootDto, orgUnits);
                 return Ok(result);
             }
             catch (Exception ex)
