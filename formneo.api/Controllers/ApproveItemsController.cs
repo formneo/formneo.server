@@ -1,7 +1,8 @@
-﻿using AutoMapper;
+using AutoMapper;
 using DocumentFormat.OpenXml.Office2010.Excel;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Internal;
@@ -39,15 +40,16 @@ namespace formneo.api.Controllers
         private readonly IApproveItemsService _service;
         private readonly IServiceWithDto<BudgetJobCodeRequest, BudgetJobCodeRequestListDto> _jobCodeservice;
         private readonly IServiceWithDto<BudgetNormCodeRequest, BudgetNormCodeRequestListDto> _normCodeRequest;
-
         private readonly IServiceWithDto<Tickets, TicketListDto> _ticketGenericService;
+        private readonly UserManager<UserApp> _userManager;
 
-        public ApproveItemsController(IServiceWithDto<Tickets, TicketListDto> ticketGenericService, IMapper mapper, IApproveItemsService approveItemsService, IServiceWithDto<BudgetJobCodeRequest, BudgetJobCodeRequestListDto> jobcodeService, IServiceWithDto<BudgetNormCodeRequest, BudgetNormCodeRequestListDto> normCodeRequest)
+        public ApproveItemsController(IServiceWithDto<Tickets, TicketListDto> ticketGenericService, IMapper mapper, IApproveItemsService approveItemsService, IServiceWithDto<BudgetJobCodeRequest, BudgetJobCodeRequestListDto> jobcodeService, IServiceWithDto<BudgetNormCodeRequest, BudgetNormCodeRequestListDto> normCodeRequest, UserManager<UserApp> userManager)
         {
 
             _mapper = mapper;
             _service = approveItemsService;
             _jobCodeservice = jobcodeService;
+            _userManager = userManager;
             _normCodeRequest = normCodeRequest;
             _ticketGenericService = ticketGenericService;
         }
@@ -72,6 +74,14 @@ namespace formneo.api.Controllers
 
 
             string username = User.Identity.Name;
+            
+            // UserName'i UserId'ye çevir
+            var currentUser = await _userManager.FindByNameAsync(username);
+            if (currentUser == null)
+            {
+                return new ApproveItemsDtoResult { ApproveItemsDtoList = new List<ApproveItemsDto>(), Count = 0 };
+            }
+            string userId = currentUser.Id;
 
             createUser = "";// User.Identity.Name;
             var items = await _service.GetAllRelationTable();
@@ -251,8 +261,17 @@ namespace formneo.api.Controllers
         public async Task<int> GetPendingCount()
         {
             var loginName = User.Identity.Name;
+            
+            // UserName'i UserId'ye çevir
+            var currentUser = await _userManager.FindByNameAsync(loginName);
+            if (currentUser == null)
+            {
+                return 0;
+            }
+            string userId = currentUser.Id;
+            
             var approveItem = await _service.GetAllAsync();
-            var dto = _mapper.Map<List<ApproveItemsDto>>(approveItem.Where(e => e.ApproverStatus == ApproverStatus.Pending && e.ApproveUser == loginName));
+            var dto = _mapper.Map<List<ApproveItemsDto>>(approveItem.Where(e => e.ApproverStatus == ApproverStatus.Pending && e.ApproveUserId == userId));  // ✅ UserId ile karşılaştır
 
             return dto.Count;
 

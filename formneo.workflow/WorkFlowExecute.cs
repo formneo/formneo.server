@@ -1,4 +1,4 @@
-﻿using Newtonsoft.Json;
+using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using NLayer.Core.Services;
 using NLayer.Service.Services;
@@ -28,26 +28,29 @@ namespace formneo.workflow
 
 
 
-            List<WorkflowItem> workFlowItems = new List<WorkflowItem>();
+            // ✅ THREADING FIX: TÜM DbContext sorgularını en başta yap
+            // 1. WorkFlowDefination yükle
+            var workFlowDefination = await parameters._workFlowDefination.GetByIdGuidAsync(dto.WorkFlowDefinationId);
+            
+            if (workFlowDefination == null)
+            {
+                throw new Exception("WorkFlowDefination not found");
+            }
 
-            WorkflowHead head = new WorkflowHead();
-            var workFlowDefination = await parameters._workFlowDefination.GetByIdGuidAsync(new Guid(dto.WorkFlowDefinationId.ToString()));
-
+            // 2. Workflow'u parse et
             var settings = new JsonSerializerSettings
             {
                 MissingMemberHandling = MissingMemberHandling.Ignore
             };
-
-
-            if (workFlowDefination == null)
-            {
-
-
-
-            }
             Workflow workflow = JsonConvert.DeserializeObject<Workflow>(workFlowDefination!.Data.Defination!, settings);
-
             workflow._parameters = parameters;
+            
+            // 3. EmployeeAssignments'i önceden yükle (cache'le)
+            await workflow.PreloadAssignmentsAsync();
+            
+            // ✅ Artık hiçbir DbContext sorgusu kalmadı, workflow execution başlayabilir
+            List<WorkflowItem> workFlowItems = new List<WorkflowItem>();
+            WorkflowHead head = new WorkflowHead();
 
             HashSet<string> nodeIds = new HashSet<string>(workflow.Nodes.Select(node => node.Id));
 
@@ -65,46 +68,82 @@ namespace formneo.workflow
                 /// Onay Kaydı Bul
                 /// 
 
-                var ApproverItem = await _parameters._approverItemsService.GetByIdStringGuidAsync(new Guid(dto.ApproverItemId));
+                ApproveItems ApproverItem = null;
 
-                // Buton bazlı sistem: Action'a göre durum belirlenir (APPROVE, REJECT, vb.)
-                // Artık Input ile "yes/no" mantığı yok
-                if (!string.IsNullOrEmpty(dto.Action))
+                // ApproverItemId sadece ApproverNode (UserTask) için gerekli
+                // FormTaskNode için null olabilir, bu durumda ApproverItem null kalır
+                if (!string.IsNullOrEmpty(dto.ApproverItemId))
                 {
-                    string actionUpper = dto.Action.ToUpper();
-                    if (actionUpper == "APPROVE" || actionUpper == "ONAYLA" || actionUpper == "YES")
+                    ApproverItem = await _parameters._approverItemsService.GetByIdStringGuidAsync(new Guid(dto.ApproverItemId));
+
+                    // Buton bazlı sistem: Action'a göre durum belirlenir (APPROVE, REJECT, vb.)
+                    // Artık Input ile "yes/no" mantığı yok
+                    if (!string.IsNullOrEmpty(dto.Action))
                     {
-                        ApproverItem.ApproverStatus = ApproverStatus.Approve;
+                        string actionUpper = dto.Action.ToUpper();
+                        if (actionUpper == "APPROVE" || actionUpper == "ONAYLA" || actionUpper == "YES")
+                        {
+                            ApproverItem.ApproverStatus = ApproverStatus.Approve;
+                        }
+                        else if (actionUpper == "REJECT" || actionUpper == "REDDET" || actionUpper == "NO")
+                        {
+                            ApproverItem.ApproverStatus = ApproverStatus.Reject;
+                        }
                     }
-                    else if (actionUpper == "REJECT" || actionUpper == "REDDET" || actionUpper == "NO")
+
+                    if (dto.Note != null)
                     {
-                        ApproverItem.ApproverStatus = ApproverStatus.Reject;
+                        ApproverItem.ApprovedUser_RuntimeNote = dto.Note;
                     }
+                    if (dto.NumberManDay != null)
+                    {
+                        ApproverItem.ApprovedUser_RuntimeNumberManDay = dto.NumberManDay;
+                    }
+
+                    Utils utils = new Utils();
+
+                    var approverUser = utils.GetNameAndSurnameAsync(dto.UserName);
+                    ApproverItem.ApprovedUser_RuntimeNameSurname = approverUser;
+
+                    // dto.UserName'i UserId'ye çevir
+                    string runtimeUserId = dto.UserName; // Default
+                    if (_parameters?.UserManager != null && !string.IsNullOrEmpty(dto.UserName))
+                    {
+                        try
+                        {
+                            var user = await _parameters.UserManager.FindByNameAsync(dto.UserName);
+                            if (user != null)
+                            {
+                                runtimeUserId = user.Id;
+                            }
+                        }
+                        catch { }
+                    }
+                    ApproverItem.ApprovedUser_RuntimeId = runtimeUserId;
                 }
 
-                if (dto.Note != null)
+
+                // WorkFlowId ve NodeId nullable string, bu yüzden kontrol gerekli
+                if (string.IsNullOrEmpty(dto.WorkFlowId) || string.IsNullOrEmpty(dto.NodeId))
                 {
-                    ApproverItem.ApprovedUser_RuntimeNote = dto.Note;
+                    throw new ArgumentException("WorkFlowId and NodeId are required for continuing workflow");
                 }
-                if (dto.NumberManDay != null)
+
+                if (!Guid.TryParse(dto.WorkFlowId, out Guid workflowHeadGuid))
                 {
-                    ApproverItem.ApprovedUser_RuntimeNumberManDay = dto.NumberManDay;
+                    throw new ArgumentException($"Invalid WorkFlowId format: {dto.WorkFlowId}");
                 }
 
-                Utils utils = new Utils();
+                if (!Guid.TryParse(dto.NodeId, out Guid nodeGuid))
+                {
+                    throw new ArgumentException($"Invalid NodeId format: {dto.NodeId}");
+                }
 
-                var approverUser = utils.GetNameAndSurnameAsync(dto.UserName);
-                ApproverItem.ApprovedUser_RuntimeNameSurname = approverUser;
-
-                ApproverItem.ApprovedUser_Runtime = dto.UserName;
-
-
-                Guid g = new Guid(dto.WorkFlowId);
-                head = await parameters.workFlowService.GetWorkFlowWitId(g);
+                head = await parameters.workFlowService.GetWorkFlowWitId(workflowHeadGuid);
                 workflow._workFlowItems = head.workflowItems;
-                var startNode = head.workflowItems.Where(e => e.Id == new Guid(dto.NodeId)).FirstOrDefault();
+                var startNode = head.workflowItems.Where(e => e.Id == nodeGuid).FirstOrDefault();
 
-                workflow._HeadId = new Guid(dto.WorkFlowId);
+                workflow._HeadId = workflowHeadGuid;
 
                 // Continue metoduna payloadJson'ı da geç (FormData için)
                 // Artık Input yerine Action kullanılıyor (buton bazlı sistem)
@@ -128,8 +167,38 @@ namespace formneo.workflow
                         // FormTaskNode kontrolü - sadece formTaskNode için FormInstance güncelle
                         if (item.NodeType == "formTaskNode" && item.formItems != null && item.formItems.Count > 0)
                         {
-                            formItemToSave = item.formItems.FirstOrDefault();
                             formTaskWorkflowItem = item;
+                            
+                            // dto.UserName'e göre doğru FormItem'ı bul
+                            // dto.UserName Identity.Name'den geliyor, UserId'ye çevir
+                            string currentUserId = dto.UserName; // Default: UserName
+                            
+                            // UserManager varsa, UserName'den UserId'yi al
+                            if (_parameters?.UserManager != null && !string.IsNullOrEmpty(dto.UserName))
+                            {
+                                try
+                                {
+                                    var user = await _parameters.UserManager.FindByNameAsync(dto.UserName);
+                                    if (user != null)
+                                    {
+                                        currentUserId = user.Id;
+                                    }
+                                }
+                                catch
+                                {
+                                    // Hata durumunda UserName kullan
+                                }
+                            }
+                            
+                            // Eğer birden fazla FormItem varsa (department_all gibi durumlar), dolduran kullanıcının FormItem'ını bul
+                            formItemToSave = item.formItems.FirstOrDefault(fi => fi.FormUserId == currentUserId);
+                            
+                            // Eğer bulunamazsa (eski sistem uyumluluğu için), ilk FormItem'ı al
+                            if (formItemToSave == null)
+                            {
+                                formItemToSave = item.formItems.FirstOrDefault();
+                            }
+                            
                             // Kullanıcı mesajını ekle
                             if (formItemToSave != null && dto.Note != null)
                             {
@@ -140,6 +209,25 @@ namespace formneo.workflow
                             {
                                 formItemToSave.FormData = payloadJson;
                             }
+                            
+                            // Dolduran kullanıcının FormItem'ını Completed yap
+                            if (formItemToSave != null)
+                            {
+                                formItemToSave.FormItemStatus = FormItemStatus.Completed;
+                            }
+                            
+                            // Diğer tüm FormItem'ları Completed yap (biri doldurunca diğerleri kapanır)
+                            if (formItemToSave != null && item.formItems.Count > 1)
+                            {
+                                foreach (var formItem in item.formItems)
+                                {
+                                    if (formItem.Id != formItemToSave.Id)
+                                    {
+                                        formItem.FormItemStatus = FormItemStatus.Completed;
+                                    }
+                                }
+                            }
+                            
                             break;
                         }
                     }
@@ -174,6 +262,7 @@ namespace formneo.workflow
                     var existingFormInstanceQuery = parameters._formInstanceService.Where(e => e.WorkflowHeadId == head.Id);
                     var existingFormInstance = await existingFormInstanceQuery.FirstOrDefaultAsync();
 
+                    Utils utils = new Utils();
                     string userNameSurname = utils.GetNameAndSurnameAsync(dto.UserName).ToString();
 
                     if (existingFormInstance != null)
@@ -206,41 +295,65 @@ namespace formneo.workflow
                 // Continue metodunda head.workflowItems'i gönder (FormItems'ları kaydetmek için)
                 var result = await parameters.workFlowService.UpdateWorkFlowAndRelations(head, head.workflowItems, ApproverItem, formItemToSave, formInstanceToSave);
 
+                // ✅ THREADING FIX: SendMail'i SaveChanges'ten SONRA çağır
+                // Navigation property'lere (ApproveUser.Email) erişmeden önce tüm DbContext işlemleri tamamlanmalı
                 if (result != null)
                 {
-
                     if (head.workFlowStatus == WorkflowStatus.Completed)
                     {
                         string getUniqApproveId = head.UniqNumber.ToString();
-
                         SendMail(MailStatus.OnaySureciTamamlandı, head.CreateUser, "", getUniqApproveId);
                     }
 
-                    foreach (var item in head.workflowItems)
+                    if (parameters?.UserManager != null)
                     {
-
-
-
-                        if (item.approveItems != null)
+                        foreach (var item in head.workflowItems)
                         {
-                            foreach (var mail in item.approveItems!)
+                            if (item.approveItems != null)
                             {
-
-
-
-
-                                //string getUniqApproveId = Utils.ShortenGuid(head.Id);
-
-
-                                if (mail.ApproverStatus == ApproverStatus.Pending)
+                                foreach (var mail in item.approveItems)
                                 {
-                                    SendMail(MailStatus.OnayınızaSunuldu, mail.ApproveUser, mail.ApproveUserNameSurname, head.UniqNumber.ToString(), head.WorkFlowInfo);
-                                }
-                                if (mail.ApproverStatus == ApproverStatus.Reject)
-                                {
-
-
-                                    SendMail(MailStatus.Reddedildi, mail.ApprovedUser_Runtime, mail.ApproveUserNameSurname, head.UniqNumber.ToString(), head.WorkFlowInfo);
+                                    if (mail.ApproverStatus == ApproverStatus.Pending)
+                                    {
+                                        // ✅ UserManager ile user'ı bul ve email al (DbContext işlemleri bittikten sonra)
+                                        string approveUserEmail = mail.ApproveUserId; // Default: UserId
+                                        try
+                                        {
+                                            var user = await parameters.UserManager.FindByIdAsync(mail.ApproveUserId);
+                                            if (user != null)
+                                            {
+                                                approveUserEmail = user.Email ?? user.UserName ?? mail.ApproveUserId;
+                                            }
+                                        }
+                                        catch
+                                        {
+                                            // User bulunamazsa ApproveUserId kullan
+                                        }
+                                        
+                                        SendMail(MailStatus.OnayınızaSunuldu, approveUserEmail, mail.ApproveUserNameSurname, head.UniqNumber.ToString(), head.WorkFlowInfo);
+                                    }
+                                    else if (mail.ApproverStatus == ApproverStatus.Reject)
+                                    {
+                                        // ✅ UserManager ile runtime user'ı bul ve email al
+                                        string runtimeUserEmail = "";
+                                        if (!string.IsNullOrEmpty(mail.ApprovedUser_RuntimeId))
+                                        {
+                                            try
+                                            {
+                                                var user = await parameters.UserManager.FindByIdAsync(mail.ApprovedUser_RuntimeId);
+                                                if (user != null)
+                                                {
+                                                    runtimeUserEmail = user.Email ?? user.UserName ?? mail.ApprovedUser_RuntimeId;
+                                                }
+                                            }
+                                            catch
+                                            {
+                                                runtimeUserEmail = mail.ApprovedUser_RuntimeId;
+                                            }
+                                        }
+                                        
+                                        SendMail(MailStatus.Reddedildi, runtimeUserEmail, mail.ApproveUserNameSurname, head.UniqNumber.ToString(), head.WorkFlowInfo);
+                                    }
                                 }
                             }
                         }
@@ -260,6 +373,7 @@ namespace formneo.workflow
                 head.WorkFlowDefinationJson = workFlowDefination!.Data.Defination!;
                 head.workFlowStatus = WorkflowStatus.InProgress;
 
+                // ✅ THREADING FIX: EmployeeAssignments zaten metod başında yüklendi (cache hazır)
                 // Action'ı workflow'a geçir
                 // NOT: Action Start metodunda set edilir ve formNode'a gelince kullanılır
                 string actionToPass = dto.Action ?? "";
@@ -284,90 +398,131 @@ namespace formneo.workflow
                     return head; // Alert bilgileriyle birlikte döndür, ama veritabanına kaydetme
                 }
 
-                var result = await parameters.workFlowService.AddAsync(head);
-
-                // FormItems'ları kaydet (UpdateWorkFlowAndRelations ile - ApproveItems mantığı gibi)
-                // FormTaskNode'a gelindiğinde FormItems oluşturuldu ve workFlowItem.formItems'e eklendi
-                // UpdateWorkFlowAndRelations içinde FormItems'lar kaydedilecek
-                
-                // FormTaskNode için FormInstance oluştur (ilk kez oluşturulduğunda)
+                // ✅ THREADING FIX: Form bilgilerini AddAsync'den ÖNCE al
+                // FormTaskNode için FormDesign'i önceden yükle (DbContext threading sorununu önlemek için)
                 FormItems formItemToSave = null;
                 FormInstance formInstanceToSave = null;
                 
-                if (result != null && result.workflowItems != null)
+                foreach (var item in head.workflowItems)
                 {
-                    // FormTaskNode kontrolü - FormTaskNode'a gelindiğinde FormInstance oluştur
-                    foreach (var item in result.workflowItems)
+                    if (item.NodeType == "formTaskNode" && item.formItems != null && item.formItems.Count > 0)
                     {
-                        if (item.NodeType == "formTaskNode" && item.formItems != null && item.formItems.Count > 0)
+                        formItemToSave = item.formItems.FirstOrDefault();
+                        if (formItemToSave != null)
                         {
-                            formItemToSave = item.formItems.FirstOrDefault();
-                            if (formItemToSave != null)
+                            // FormDesign'i belirle: FormItem'dan veya FormId varsa Form tablosundan
+                            string formDesign = formItemToSave.FormDesign;
+                            
+                            // Eğer FormDesign boşsa ve FormId varsa, Form tablosundan al
+                            // ✅ AddAsync çağrısından ÖNCE yapıyoruz (threading fix)
+                            if (string.IsNullOrEmpty(formDesign) && formItemToSave.FormId.HasValue && parameters._formService != null)
                             {
-                                // FormDesign'i belirle: FormItem'dan veya FormId varsa Form tablosundan
-                                string formDesign = formItemToSave.FormDesign;
-                                
-                                // Eğer FormDesign boşsa ve FormId varsa, Form tablosundan al
-                                // Bu işlem async olduğu için Start metodunda yapılır (ExecuteFormTaskNode senkron)
-                                if (string.IsNullOrEmpty(formDesign) && formItemToSave.FormId.HasValue && parameters._formService != null)
+                                try
                                 {
+                                    var form = await parameters._formService.GetByIdStringGuidAsync(formItemToSave.FormId.Value);
+                                    if (form != null && !string.IsNullOrEmpty(form.FormDesign))
+                                    {
+                                        formDesign = form.FormDesign;
+                                        // FormItem'daki FormDesign'i de güncelle
+                                        formItemToSave.FormDesign = formDesign;
+                                    }
+                                }
+                                catch
+                                {
+                                    // Form bulunamazsa devam et
+                                }
+                            }
+                            
+                            // FormData her zaman gelir (formdan butonla action ve form verisi gelir)
+                            // FormItem'a da FormData'yı kaydet
+                            if (!string.IsNullOrEmpty(payloadJson))
+                            {
+                                formItemToSave.FormData = payloadJson;
+                            }
+                            
+                            break; // İlk FormTaskNode'u bulduktan sonra çık
+                        }
+                    }
+                }
+
+                // ✅ THREADING FIX: head'i DbContext'e eklemeden önce navigation property'leri temizle
+                // Böylece lazy loading tetiklenmez ve threading sorunu oluşmaz
+                foreach (var item in head.workflowItems)
+                {
+                    // Navigation property'leri null yap (EF Core lazy loading'i tetiklemesin)
+                    // Bu objeler yeni oluşturulmuş, henüz DbContext'e eklenmemiş
+                    // EF Core bunları AddAsync sırasında otomatik olarak ilişkilendirecek
+                    if (item.formItems != null)
+                    {
+                        foreach (var formItem in item.formItems)
+                        {
+                            formItem.FormUser = null; // Navigation property'yi temizle
+                        }
+                    }
+                    if (item.approveItems != null)
+                    {
+                        foreach (var approveItem in item.approveItems)
+                        {
+                            approveItem.ApproveUser = null; // Navigation property'yi temizle
+                            approveItem.ApprovedUser_Runtime = null; // Navigation property'yi temizle
+                        }
+                    }
+                }
+
+                // ✅ Artık tüm ön hazırlıklar tamamlandı, workflow'u kaydet
+                var result = await parameters.workFlowService.AddAsync(head);
+
+                // FormInstance oluştur (result.Id gerekiyor)
+                if (result != null && formItemToSave != null)
+                {
+                    Utils utils = new Utils();
+                    string userNameSurname = utils.GetNameAndSurnameAsync(dto.UserName).ToString();
+                    
+                    formInstanceToSave = new FormInstance
+                    {
+                        WorkflowHeadId = result.Id,
+                        FormId = formItemToSave.FormId,
+                        FormDesign = formItemToSave.FormDesign, // Yukarıda doldurduk
+                        FormData = payloadJson,
+                        UpdatedBy = dto.UserName,
+                        UpdatedByNameSurname = userNameSurname
+                    };
+                    
+                    // FormItems ve FormInstance'ı kaydet
+                    await parameters.workFlowService.UpdateWorkFlowAndRelations(result, result.workflowItems, null, formItemToSave, formInstanceToSave);
+                }
+
+                // ✅ THREADING FIX: SendMail'i SaveChanges'ten SONRA çağır
+                // Navigation property'lere (ApproveUser.Email) erişmeden önce tüm DbContext işlemleri tamamlanmalı
+                if (result != null && parameters?.UserManager != null)
+                {
+                    foreach (var item in head.workflowItems)
+                    {
+                        if (item.approveItems != null)
+                        {
+                            foreach (var mail in item.approveItems)
+                            {
+                                if (mail.ApproverStatus == ApproverStatus.Pending)
+                                {
+                                    string getUniqApproveId = Utils.ShortenGuid(head.Id);
+                                    
+                                    // ✅ UserManager ile user'ı bul ve email al (DbContext işlemleri bittikten sonra)
+                                    string approveUserEmail = mail.ApproveUserId; // Default: UserId
                                     try
                                     {
-                                        var form = await parameters._formService.GetByIdStringGuidAsync(formItemToSave.FormId.Value);
-                                        if (form != null && !string.IsNullOrEmpty(form.FormDesign))
+                                        var user = await parameters.UserManager.FindByIdAsync(mail.ApproveUserId);
+                                        if (user != null)
                                         {
-                                            formDesign = form.FormDesign;
-                                            // FormItem'daki FormDesign'i de güncelle
-                                            formItemToSave.FormDesign = formDesign;
+                                            approveUserEmail = user.Email ?? user.UserName ?? mail.ApproveUserId;
                                         }
                                     }
                                     catch
                                     {
-                                        // Form bulunamazsa devam et
+                                        // User bulunamazsa ApproveUserId kullan
                                     }
+                                    
+                                    SendMail(MailStatus.OnayınızaSunuldu, approveUserEmail, mail.ApproveUserNameSurname, head.UniqNumber.ToString(), head.WorkFlowInfo);
                                 }
-                                
-                                // FormInstance oluştur (FormDesign boş olsa bile oluştur, sonra güncellenebilir)
-                                Utils utils = new Utils();
-                                string userNameSurname = utils.GetNameAndSurnameAsync(dto.UserName).ToString();
-                                
-                                // FormData her zaman gelir (formdan butonla action ve form verisi gelir)
-                                // FormItem'a da FormData'yı kaydet
-                                if (!string.IsNullOrEmpty(payloadJson))
-                                {
-                                    formItemToSave.FormData = payloadJson;
-                                }
-                                
-                                // FormInstance oluştur (FormDesign boş olsa bile, sonra güncellenebilir)
-                                formInstanceToSave = new FormInstance
-                                {
-                                    WorkflowHeadId = result.Id,
-                                    FormId = formItemToSave.FormId,
-                                    FormDesign = formDesign, // FormDesign varsa kullan, yoksa null olabilir
-                                    FormData = payloadJson, // FormData her zaman gelir
-                                    UpdatedBy = dto.UserName,
-                                    UpdatedByNameSurname = userNameSurname
-                                };
-                            }
-                            break;
-                        }
-                    }
-                    
-                    await parameters.workFlowService.UpdateWorkFlowAndRelations(result, result.workflowItems, null, formItemToSave, formInstanceToSave);
-                }
-
-                if (result != null)
-                {
-                    foreach (var item in head.workflowItems)
-                    {
-                        foreach (var mail in item.approveItems!)
-                        {
-                            if (mail.ApproverStatus == ApproverStatus.Pending)
-                            {
-
-
-                                string getUniqApproveId = Utils.ShortenGuid(head.Id);
-                                SendMail(MailStatus.OnayınızaSunuldu, mail.ApproveUser, mail.ApproveUserNameSurname, head.UniqNumber.ToString(), head.WorkFlowInfo);
                             }
                         }
                     }

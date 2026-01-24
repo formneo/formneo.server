@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -32,7 +32,11 @@ namespace formneo.service.Services
         {
             var list = _approveItemsRepository.GetAll(); ;
 
-            var ss = _approveItemsRepository.GetAll().Include(e => e.WorkflowItem).ThenInclude(e => e.WorkflowHead).ToList();
+            var ss = _approveItemsRepository.GetAll()
+                .Include(e => e.WorkflowItem).ThenInclude(e => e.WorkflowHead)
+                .Include(e => e.ApproveUser)  // ✅ Navigation property'yi include et
+                .Include(e => e.ApprovedUser_Runtime)  // ✅ Runtime navigation property'yi include et
+                .ToList();
 
             var dto = _mapper.Map<List<ApproveItemsDto>>(ss.OrderByDescending(e => e.CreatedDate));
 

@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using System;
@@ -59,33 +59,73 @@ namespace formneo.service.Services
 
             try
             {
-                // WorkflowHead'i güncelle - tracking sorununu önlemek için yeniden yükle ve property'leri kopyala
+                // ✅ THREADING FIX: Tüm ID'leri topla ve TEK SEFERDE yükle
+                var idsToLoad = new List<Guid>();
+                if (approveItems != null && approveItems.Id != Guid.Empty) idsToLoad.Add(approveItems.Id);
+                if (formItem != null && formItem.Id != Guid.Empty) idsToLoad.Add(formItem.Id);
+                if (formInstance != null && formInstance.Id != Guid.Empty) idsToLoad.Add(formInstance.Id);
+                if (workflowItems != null)
+                {
+                    foreach (var item in workflowItems)
+                    {
+                        if (item.formItems != null)
+                        {
+                            idsToLoad.AddRange(item.formItems.Where(fi => fi.Id != Guid.Empty).Select(fi => fi.Id));
+                        }
+                    }
+                }
+
+                // ✅ Tüm entity'leri TEK QUERY ile yükle (Context'e tek seferlik erişim)
+                var unitOfWork = _unitOfWork as formneo.repository.UnitOfWorks.UnitOfWork;
+                Dictionary<Guid, object> loadedEntities = new Dictionary<Guid, object>();
+                
+                if (unitOfWork != null && idsToLoad.Count > 0)
+                {
+                    // ApproveItems'ları yükle
+                    if (approveItems != null && approveItems.Id != Guid.Empty)
+                    {
+                        var loadedApproveItems = await unitOfWork._context.ApproveItems
+                            .Where(x => idsToLoad.Contains(x.Id))
+                            .ToListAsync();
+                        foreach (var item in loadedApproveItems) loadedEntities[item.Id] = item;
+                    }
+                    
+                    // FormItems'ları yükle
+                    var loadedFormItems = await unitOfWork._context.FormItems
+                        .Where(x => idsToLoad.Contains(x.Id))
+                        .ToListAsync();
+                    foreach (var item in loadedFormItems) loadedEntities[item.Id] = item;
+                    
+                    // FormInstance'ları yükle
+                    if (formInstance != null && formInstance.Id != Guid.Empty)
+                    {
+                        var loadedFormInstances = await unitOfWork._context.FormInstance
+                            .Where(x => idsToLoad.Contains(x.Id))
+                            .ToListAsync();
+                        foreach (var item in loadedFormInstances) loadedEntities[item.Id] = item;
+                    }
+                }
+
+                // WorkflowHead'i güncelle
                 if (head.Id != Guid.Empty)
                 {
-                    // Tracking edilmiş entity'yi yükle (RowVersion dahil, workflowItems Include ile)
-                    // UnitOfWork üzerinden context'e eriş ve Include ile tracking ile yükle
-                    var unitOfWork = _unitOfWork as formneo.repository.UnitOfWorks.UnitOfWork;
                     WorkflowHead existingHead;
                     if (unitOfWork != null)
                     {
-                        // Context üzerinden tracking ile yükle (workflowItems Include ile)
                         existingHead = await unitOfWork._context.WorkflowHead
                             .Include(e => e.workflowItems)
                             .FirstOrDefaultAsync(x => x.Id == head.Id);
                     }
                     else
                     {
-                        // Fallback: Normal GetByIdStringGuidAsync kullan
                         existingHead = await _workFlowRepository.GetByIdStringGuidAsync(head.Id);
                     }
+                    
                     if (existingHead == null)
                     {
                         throw new Exception($"WorkflowHead with id '{head.Id}' not found");
                     }
                     
-                    // Sadece değişen property'leri kopyala (tracking edilmiş entity'ye)
-                    // EF Core otomatik olarak değişiklikleri algılayacak, Update() çağrısına gerek yok
-                    // Bu şekilde RowVersion concurrency token korunur ve concurrency hatası önlenir
                     existingHead.WorkflowName = head.WorkflowName;
                     existingHead.CurrentNodeId = head.CurrentNodeId;
                     existingHead.CurrentNodeName = head.CurrentNodeName;
@@ -95,53 +135,59 @@ namespace formneo.service.Services
                     existingHead.WorkFlowDefinationId = head.WorkFlowDefinationId;
                     existingHead.WorkFlowDefinationJson = head.WorkFlowDefinationJson;
                     
-                    // Update() çağrısına GEREK YOK!
-                    // existingHead tracking edilmiş durumda, property değişiklikleri otomatik algılanacak
-                    // Update() çağrısı tüm property'leri Modified olarak işaretler ve RowVersion sorununa neden olur
-                    
-                    // WorkflowItems'ları da güncelle (tracking edilmiş items ile eşleştir)
                     if (existingHead.workflowItems != null && workflowItems != null)
                     {
                         foreach (var incomingItem in workflowItems)
                         {
-                            // Tracking edilmiş WorkflowItem'ı bul
                             var existingItem = existingHead.workflowItems.FirstOrDefault(e => e.Id == incomingItem.Id);
                             if (existingItem != null)
                             {
-                                // Property'leri kopyala (tracking edilmiş entity'ye)
                                 existingItem.NodeName = incomingItem.NodeName;
                                 existingItem.NodeType = incomingItem.NodeType;
                                 existingItem.NodeDescription = incomingItem.NodeDescription;
                                 existingItem.workFlowNodeStatus = incomingItem.workFlowNodeStatus;
-                                // Update() çağrısına gerek yok, tracking otomatik algılar
                             }
                         }
                     }
                 }
                 else
                 {
-                    // Yeni WorkflowHead ekle
                     await _workFlowRepository.AddAsync(head);
                 }
 
-                // ApproveItems artık kullanılmıyor, bu kısım kaldırıldı
-                // if (approveItems != null) { ... }
-
-            if (formItem != null)
-            {
-                if (formItem.Id == Guid.Empty)
+                // ApproverItem'ı güncelle (memory'den)
+                if (approveItems != null)
                 {
-                    await _formItemsRepository.AddAsync(formItem);
+                    try
+                    {
+                        if (loadedEntities.TryGetValue(approveItems.Id, out var existingObj) && existingObj is ApproveItems existingApproverItem)
+                        {
+                            existingApproverItem.ApproverStatus = approveItems.ApproverStatus;
+                            existingApproverItem.ApprovedUser_Runtime = approveItems.ApprovedUser_Runtime;
+                            existingApproverItem.ApprovedUser_RuntimeNameSurname = approveItems.ApprovedUser_RuntimeNameSurname;
+                            existingApproverItem.ApprovedUser_RuntimeNote = approveItems.ApprovedUser_RuntimeNote;
+                            existingApproverItem.ApprovedUser_RuntimeNumberManDay = approveItems.ApprovedUser_RuntimeNumberManDay;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"ApproverItem update error: {ex.Message}");
+                    }
                 }
-                else
+
+                // FormItem'ı güncelle (memory'den)
+                if (formItem != null)
                 {
-                        // FormItem'ı güncelle - var olup olmadığını kontrol et
+                    if (formItem.Id == Guid.Empty)
+                    {
+                        await _formItemsRepository.AddAsync(formItem);
+                    }
+                    else
+                    {
                         try
                         {
-                            var existingFormItem = await _formItemsRepository.GetByIdStringGuidAsync(formItem.Id);
-                            if (existingFormItem != null)
+                            if (loadedEntities.TryGetValue(formItem.Id, out var existingObj) && existingObj is FormItems existingFormItem)
                             {
-                                // Property'leri kopyala (tracking edilmiş entity'ye)
                                 existingFormItem.FormDesign = formItem.FormDesign;
                                 existingFormItem.FormId = formItem.FormId;
                                 existingFormItem.FormUser = formItem.FormUser;
@@ -151,39 +197,34 @@ namespace formneo.service.Services
                                 existingFormItem.FormUserMessage = formItem.FormUserMessage;
                                 existingFormItem.FormTaskMessage = formItem.FormTaskMessage;
                                 existingFormItem.FormItemStatus = formItem.FormItemStatus;
-                                // Update() çağrısına gerek yok, tracking otomatik algılar
                             }
                             else
                             {
-                                // Bulunamazsa yeni ekle
                                 formItem.Id = Guid.Empty;
                                 await _formItemsRepository.AddAsync(formItem);
                             }
                         }
                         catch
                         {
-                            // Hata durumunda yeni ekle
                             formItem.Id = Guid.Empty;
                             await _formItemsRepository.AddAsync(formItem);
                         }
+                    }
                 }
-            }
 
-            if (formInstance != null)
-            {
-                if (formInstance.Id == Guid.Empty)
+                // FormInstance'ı güncelle (memory'den)
+                if (formInstance != null)
                 {
-                    await _formInstanceRepository.AddAsync(formInstance);
-                }
-                else
-                {
-                        // FormInstance'ı güncelle - var olup olmadığını kontrol et
+                    if (formInstance.Id == Guid.Empty)
+                    {
+                        await _formInstanceRepository.AddAsync(formInstance);
+                    }
+                    else
+                    {
                         try
                         {
-                            var existingFormInstance = await _formInstanceRepository.GetByIdStringGuidAsync(formInstance.Id);
-                            if (existingFormInstance != null)
+                            if (loadedEntities.TryGetValue(formInstance.Id, out var existingObj) && existingObj is FormInstance existingFormInstance)
                             {
-                                // Property'leri kopyala (tracking edilmiş entity'ye)
                                 existingFormInstance.WorkflowHeadId = formInstance.WorkflowHeadId;
                                 existingFormInstance.FormId = formInstance.FormId;
                                 existingFormInstance.FormDesign = formInstance.FormDesign;
@@ -191,57 +232,52 @@ namespace formneo.service.Services
                                 existingFormInstance.UpdatedBy = formInstance.UpdatedBy;
                                 existingFormInstance.UpdatedByNameSurname = formInstance.UpdatedByNameSurname;
                                 existingFormInstance.UpdatedDate = formInstance.UpdatedDate;
-                                // Update() çağrısına gerek yok, tracking otomatik algılar
                             }
                             else
                             {
-                                // Bulunamazsa yeni ekle
                                 formInstance.Id = Guid.Empty;
                                 await _formInstanceRepository.AddAsync(formInstance);
                             }
                         }
                         catch
                         {
-                            // Hata durumunda yeni ekle
                             formInstance.Id = Guid.Empty;
                             await _formInstanceRepository.AddAsync(formInstance);
                         }
+                    }
                 }
-            }
 
-            // WorkflowItems içindeki FormItems'ları kaydet
-            foreach (var item in workflowItems)
-            {
-                if (item.formItems != null && item.formItems.Count > 0)
+                // WorkflowItems içindeki FormItems'ları kaydet (memory'den)
+                if (workflowItems != null)
                 {
-                    foreach (var fi in item.formItems)
+                    foreach (var item in workflowItems)
                     {
-                        if (fi.Id == Guid.Empty)
+                        if (item.formItems != null && item.formItems.Count > 0)
                         {
-                            await _formItemsRepository.AddAsync(fi);
-                        }
-                        else
-                        {
-                                // FormItem'ın var olduğunu kontrol et
-                                var existingFi = await _formItemsRepository.GetByIdStringGuidAsync(fi.Id);
-                                if (existingFi == null)
+                            foreach (var fi in item.formItems)
+                            {
+                                if (fi.Id == Guid.Empty)
                                 {
-                                    // Eğer bulunamazsa yeni ekle
                                     await _formItemsRepository.AddAsync(fi);
                                 }
                                 else
                                 {
-                                    // Property'leri kopyala (tracking edilmiş entity'ye)
-                                    existingFi.FormDesign = fi.FormDesign;
-                                    existingFi.FormId = fi.FormId;
-                                    existingFi.FormUser = fi.FormUser;
-                                    existingFi.FormUserNameSurname = fi.FormUserNameSurname;
-                                    existingFi.FormData = fi.FormData;
-                                    existingFi.FormDescription = fi.FormDescription;
-                                    existingFi.FormUserMessage = fi.FormUserMessage;
-                                    existingFi.FormTaskMessage = fi.FormTaskMessage;
-                                    existingFi.FormItemStatus = fi.FormItemStatus;
-                                    // Update() çağrısına gerek yok, tracking otomatik algılar
+                                    if (loadedEntities.TryGetValue(fi.Id, out var existingObj) && existingObj is FormItems existingFi)
+                                    {
+                                        existingFi.FormDesign = fi.FormDesign;
+                                        existingFi.FormId = fi.FormId;
+                                        existingFi.FormUser = fi.FormUser;
+                                        existingFi.FormUserNameSurname = fi.FormUserNameSurname;
+                                        existingFi.FormData = fi.FormData;
+                                        existingFi.FormDescription = fi.FormDescription;
+                                        existingFi.FormUserMessage = fi.FormUserMessage;
+                                        existingFi.FormTaskMessage = fi.FormTaskMessage;
+                                        existingFi.FormItemStatus = fi.FormItemStatus;
+                                    }
+                                    else
+                                    {
+                                        await _formItemsRepository.AddAsync(fi);
+                                    }
                                 }
                             }
                         }

@@ -130,6 +130,13 @@ var serviceProvider = new ServiceCollection()
     .BuildServiceProvider();
 
 
+
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine(builder.Environment.ContentRootPath, "DataProtectionKeys")))
+    .SetApplicationName("formneo");
+
+
+
 builder.Services.AddIdentity<UserApp, IdentityRole>(Opt =>
 {
     Opt.User.RequireUniqueEmail = true;
@@ -141,7 +148,8 @@ builder.Services.AddHttpClient<EmployeeLeaveApiService>();
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
 builder.Services.AddHttpClient();
-var dataProtectionKeysPath = OperatingSystem.IsWindows() ? @"C:\\temp-keys" : "/keys";
+var dataProtectionKeysPath = OperatingSystem.IsWindows() ? @"C:\\temp-keys" : "/tmp/keys";
+Directory.CreateDirectory(dataProtectionKeysPath);
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(dataProtectionKeysPath))
     .UseCryptographicAlgorithms(new AuthenticatedEncryptorConfiguration()
@@ -150,7 +158,8 @@ builder.Services.AddDataProtection()
         ValidationAlgorithm = ValidationAlgorithm.HMACSHA256
     });
 
-
+builder.Services.AddDataProtection()
+    .SetApplicationName("formneo");
 
 builder.Services.AddAuthentication("BasicAuthentication")
     .AddScheme<AuthenticationSchemeOptions, BasicAuthenticationHandler>("BasicAuthentication", null);

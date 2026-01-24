@@ -76,6 +76,21 @@ namespace formneo.core.DTOs
         public DateTime CreatedDate { get; set; }
         
         public int UniqNumber { get; set; }
+        
+        /// <summary>
+        /// Süreci başlatan kişinin ad-soyad bilgisi
+        /// </summary>
+        public string BaslatanAdSoyad { get; set; }
+        
+        /// <summary>
+        /// Süreci başlatan kişinin departman bilgisi
+        /// </summary>
+        public string BaslatanDepartman { get; set; }
+        
+        /// <summary>
+        /// Süreci başlatan kişinin pozisyon bilgisi
+        /// </summary>
+        public string BaslatanPozisyon { get; set; }
     }
 
     /// <summary>
@@ -107,6 +122,21 @@ namespace formneo.core.DTOs
         public DateTime CreatedDate { get; set; }
         
         public int UniqNumber { get; set; }
+        
+        /// <summary>
+        /// Süreci başlatan kişinin ad-soyad bilgisi
+        /// </summary>
+        public string BaslatanAdSoyad { get; set; }
+        
+        /// <summary>
+        /// Süreci başlatan kişinin departman bilgisi
+        /// </summary>
+        public string BaslatanDepartman { get; set; }
+        
+        /// <summary>
+        /// Süreci başlatan kişinin pozisyon bilgisi
+        /// </summary>
+        public string BaslatanPozisyon { get; set; }
     }
 
     /// <summary>

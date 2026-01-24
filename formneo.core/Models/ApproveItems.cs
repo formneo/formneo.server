@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
 using System.Linq;
@@ -21,11 +21,36 @@ namespace formneo.core.Models
         [ForeignKey("WorkFlowItem")]
         public Guid WorkflowItemId { get; set; }
 
-        public string? ApproveUser { get; set; }
+        /// <summary>
+        /// Onaylayacak kullanıcı ID (Foreign Key - AspNetUsers.Id)
+        /// </summary>
+        [ForeignKey("ApproveUser")]
+        public string ApproveUserId { get; set; }
+
+        /// <summary>
+        /// Kullanıcı navigation property
+        /// </summary>
+        public virtual UserApp ApproveUser { get; set; }
+
+        /// <summary>
+        /// Onaylayacak kullanıcının adı soyadı (Snapshot - değişmez)
+        /// </summary>
         public string? ApproveUserNameSurname { get; set; }
 
-        public string? ApprovedUser_Runtime { get; set; }
+        /// <summary>
+        /// Runtime'da onaylayan kullanıcı ID (Foreign Key)
+        /// </summary>
+        [ForeignKey("ApprovedUser_Runtime")]
+        public string? ApprovedUser_RuntimeId { get; set; }
 
+        /// <summary>
+        /// Runtime kullanıcı navigation property
+        /// </summary>
+        public virtual UserApp? ApprovedUser_Runtime { get; set; }
+
+        /// <summary>
+        /// Runtime kullanıcının adı soyadı (Snapshot)
+        /// </summary>
         public string? ApprovedUser_RuntimeNameSurname { get; set; }
 
         public string? ApprovedUser_RuntimeNote { get; set; }

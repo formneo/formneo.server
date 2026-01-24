@@ -1,4 +1,4 @@
-﻿
+
 using Microsoft.AspNetCore.Mvc.Routing;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
@@ -101,6 +101,26 @@ public class NodeData
     /// FormNode ve FormTaskNode için formName
     /// </summary>
     public string formName { get; set; }
+    
+    /// <summary>
+    /// FormTaskNode için assignmentType (direct_manager, department_manager, department_all, position, manual)
+    /// </summary>
+    public string assignmentType { get; set; }
+    
+    /// <summary>
+    /// FormTaskNode için selectedOrgUnit (departman id'si)
+    /// </summary>
+    public string selectedOrgUnit { get; set; }
+    
+    /// <summary>
+    /// FormTaskNode için selectedPosition (pozisyon id'si)
+    /// </summary>
+    public string selectedPosition { get; set; }
+    
+    /// <summary>
+    /// FormTaskNode için selectionData (manual assignment için)
+    /// </summary>
+    public object selectionData { get; set; }
 }
 
 public class stoptype
@@ -168,12 +188,45 @@ public class Workflow
     /// Form başlatılırken gönderilen action kodu (örn: SAVE, APPROVE)
     /// </summary>
     public string _Action { get; set; }
+    
+    /// <summary>
+    /// ✅ THREADING FIX: EmployeeAssignments'i class seviyesinde cache'le
+    /// Böylece her ExecuteFormTaskNode çağrısında tekrar sorgu yapılmaz
+    /// </summary>
+    private List<formneo.core.Models.EmployeeAssignment> _cachedAssignments = null;
+
+    /// <summary>
+    /// ✅ THREADING FIX: EmployeeAssignments'i önceden yükle
+    /// Bu metod Start() çağrısından ÖNCE çağrılmalı
+    /// </summary>
+    public async Task PreloadAssignmentsAsync()
+    {
+        if (_parameters?.EmployeeAssignmentService != null && _cachedAssignments == null)
+        {
+            try
+            {
+                var assignmentsQuery = await _parameters.EmployeeAssignmentService.Include();
+                _cachedAssignments = await assignmentsQuery
+                    .Include(ea => ea.OrgUnit)
+                    .Include(ea => ea.Manager)
+                    .ToListAsync();  // ✅ Tek seferlik DB çağrısı
+            }
+            catch
+            {
+                // Hata durumunda null kalır, ExecuteFormTaskNode içinde tekrar denenecek
+                _cachedAssignments = null;
+            }
+        }
+    }
 
     public async Task Start(string apiSendUser, string payloadJson, string action = "")
     {
-        _ApiSendUser = apiSendUser;
+        _ApiSendUser = await ResolveApiSendUserIdAsync(apiSendUser);
         _payloadJson = payloadJson;
         _Action = action; // Action'ı set et - formNode'a gelince kullanılacak
+        
+        // ✅ THREADING FIX: Fallback kaldırıldı - PreloadAssignmentsAsync() çağrılmalı
+        // Eğer cache yoksa, ExecuteFormTaskNode içinde boş liste kullanılacak
         
         // İş akışını başlatmak için ilk düğümü bulun
         WorkflowNode startNode = Nodes.Find(node => node.Type == "startNode");
@@ -189,24 +242,76 @@ public class Workflow
 
     public async Task Continue(WorkflowItem workfLowItem, string nodeId, string apiSendUser, string Parameter = "", WorkflowHead head = null, WorkFlowDefination defination = null,string payloadJson=null)
     {
-
-
-        _ApiSendUser = apiSendUser;
+        _ApiSendUser = await ResolveApiSendUserIdAsync(apiSendUser);
         // payloadJson'ı set et (FormData için)
         if (!string.IsNullOrEmpty(payloadJson))
         {
             _payloadJson = payloadJson;
         }
+        
+        // ✅ THREADING FIX: EmployeeAssignments'i bir kere yükle ve cache'le
+        // Böylece ExecuteFormTaskNode içinde tekrar sorgu yapılmaz
+        if (_parameters?.EmployeeAssignmentService != null && _cachedAssignments == null)
+        {
+            try
+            {
+                var assignmentsQuery = await _parameters.EmployeeAssignmentService.Include();
+                _cachedAssignments = await assignmentsQuery
+                    .Include(ea => ea.OrgUnit)
+                    .Include(ea => ea.Manager)
+                    .ToListAsync();  // ✅ Tek seferlik DB çağrısı
+            }
+            catch
+            {
+                // Hata durumunda null kalır, ExecuteFormTaskNode içinde tekrar denenecek
+                _cachedAssignments = null;
+            }
+        }
+        
         // İş akışını başlatmak için ilk düğümü bulun
         WorkflowNode startNode;
         _workFlowHead = head;
 
         startNode = Nodes.Find(node => node.Id == nodeId);
 
-
         // İlk düğümü çalıştırın
         await ExecuteNode(startNode.Id, Parameter, workfLowItem);
+    }
 
+    private async Task<string> ResolveApiSendUserIdAsync(string apiSendUser)
+    {
+        if (string.IsNullOrWhiteSpace(apiSendUser))
+        {
+            return apiSendUser;
+        }
+
+        var userManager = _parameters?.UserManager;
+        if (userManager == null)
+        {
+            return apiSendUser;
+        }
+
+        try
+        {
+            // Önce ID olarak dene; bulunamazsa UserName ile dene.
+            var user = await userManager.FindByIdAsync(apiSendUser);
+            if (user != null)
+            {
+                return user.Id;
+            }
+
+            user = await userManager.FindByNameAsync(apiSendUser);
+            if (user != null)
+            {
+                return user.Id;
+            }
+        }
+        catch
+        {
+            // Hata durumunda gelen değeri kullan
+        }
+
+        return apiSendUser;
     }
 
     private async Task ExecuteNode(string nodeId, string Parameter = "", WorkflowItem workflowItem =null)
@@ -305,7 +410,7 @@ public class Workflow
         }
         if (result.NodeType == "formTaskNode")
         {
-            string nextNode = ExecuteFormTaskNode(currentNode, result, Parameter);
+            string nextNode = await ExecuteFormTaskNode(currentNode, result, Parameter);
 
             if (nextNode != "" && nextNode != null)
             {
@@ -414,92 +519,26 @@ public class Workflow
 
     private async Task<string> ExecuteApprove(WorkflowNode currentNode,WorkflowItem workFlowItem ,string parameter)
     {
-        //too
-
+        // TODO: ApproverNode mantığı buraya eklenecek
+        // Şimdilik basit bir implementasyon - sonra güncellenecek
+        
         if (parameter == "")
         {
             _workFlowItems.Add(workFlowItem);
-
-            Utils utils = new Utils();
-            string approverUserNameSurname = utils.GetNameAndSurnameAsync(currentNode.Data!.code).ToString();
-
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Pending;
-            if (currentNode.Data.isManager == true)
-            {
-                // Manager bilgisi EmployeeAssignment.ManagerId'den alınır (Effective Dating Pattern)
-                if (_parameters?.UserManager != null && 
-                    _parameters?.EmployeeAssignmentService != null && 
-                    !string.IsNullOrEmpty(_ApiSendUser))
-                {
-                    try
-                    {
-                        // Aktif atamayı bul (tenant filtresi otomatik)
-                        var assignmentsQuery = await _parameters.EmployeeAssignmentService.Include();
-                        var activeAssignment = await EmployeeAssignmentHelper
-                            .GetActiveAssignmentAsync(assignmentsQuery, _ApiSendUser);
-                        
-                        if (activeAssignment?.Manager != null)
-                        {
-                            var manager = activeAssignment.Manager;
-                            string managerDisplayName = $"{manager.FirstName} {manager.LastName}".Trim();
-                            workFlowItem.approveItems.Add(new ApproveItems 
-                            { 
-                                ApproveUser = manager.Id, 
-                                WorkFlowDescription = "", 
-                                ApproveUserNameSurname = managerDisplayName 
-                            });
-                            return "";
-                        }
-                        else if (activeAssignment?.OrgUnit?.Manager != null)
-                        {
-                            // Fallback: Eğer EmployeeAssignment'da ManagerId yoksa, OrgUnit.ManagerId kullan
-                            var manager = activeAssignment.OrgUnit.Manager;
-                            string managerDisplayName = $"{manager.FirstName} {manager.LastName}".Trim();
-                            workFlowItem.approveItems.Add(new ApproveItems 
-                            { 
-                                ApproveUser = manager.Id, 
-                                WorkFlowDescription = "", 
-                                ApproveUserNameSurname = managerDisplayName 
-                            });
-                            return "";
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        // Hata durumunda log ve fallback
-                        workFlowItem.approveItems.Add(new ApproveItems 
-                        { 
-                            ApproveUser = null, 
-                            WorkFlowDescription = $"Manager lookup hatası: {ex.Message}", 
-                            ApproveUserNameSurname = "" 
-                        });
-                        return "";
-                    }
-                }
-                // Manager bulunamazsa boş bırak
-                workFlowItem.approveItems.Add(new ApproveItems 
-                { 
-                    ApproveUser = null, 
-                    WorkFlowDescription = "Aktif atama veya yönetici bulunamadı", 
-                    ApproveUserNameSurname = "" 
-                });
-                return "";
-            }
-            else
-            {
-                workFlowItem.approveItems.Add(new ApproveItems { ApproveUser = currentNode.Data!.code, WorkFlowDescription = "", ApproveUserNameSurname = approverUserNameSurname });
-                return "";
-            }
+            
+            // TODO: ApproveItems oluşturma mantığı buraya gelecek
+            // Şimdilik boş bırakıyoruz
+            
             return "";
         }
         
         // Düğüme bağlı çıkış bağlantılarını bulun
-
         if (parameter == "yes" || parameter == "no")
         {
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
         }
-        var nextNode=  FindLinkForPort(currentNode.Id, parameter);
+        var nextNode = FindLinkForPort(currentNode.Id, parameter);
         return nextNode;
     }
     private string ExecuteStopNode(WorkflowNode currentNode, WorkflowItem workFlowItem, string parameter)
@@ -620,7 +659,7 @@ public class Workflow
         return nextNode;
     }
 
-    private string ExecuteFormTaskNode(WorkflowNode currentNode, WorkflowItem workFlowItem, string parameter)
+    private async Task<string> ExecuteFormTaskNode(WorkflowNode currentNode, WorkflowItem workFlowItem, string parameter)
     {
         // FormTaskNode işleme mantığı:
         // Parameter boşsa → FormItem oluştur ve pending yap
@@ -638,8 +677,6 @@ public class Workflow
             // FormDesign Form tablosundan alınacak (Start metodunda async olarak)
             string formDesign = ""; // FormTaskNode'da FormDesign yok, Form tablosundan alınacak
             string formId = ""; // Form ID (Guid string olarak)
-            string formUser = _ApiSendUser; // Formu dolduran kullanıcı
-            string formUserNameSurname = utils.GetNameAndSurnameAsync(_ApiSendUser).ToString();
             string formDescription = currentNode.Data?.Name ?? ""; // Form açıklaması
             
             // FormTaskNode'un Data'sından formId'yi al
@@ -705,25 +742,216 @@ public class Workflow
                 }
             }
             
-            // FormItem oluştur
-            var formItem = new FormItems
-            {
-                WorkflowItemId = workFlowItem.Id,
-                FormDesign = formDesign,
-                FormId = !string.IsNullOrEmpty(formId) && Guid.TryParse(formId, out Guid parsedFormId) ? parsedFormId : null,
-                FormUser = formUser,
-                FormUserNameSurname = formUserNameSurname,
-                FormDescription = formDescription,
-                FormTaskMessage = formTaskMessage, // FormTaskNode oluşturulurken kaydedilen mesaj
-                FormItemStatus = FormItemStatus.Pending
-            };
+            // assignmentType'a göre kullanıcıları belirle
+            List<string> userIds = new List<string>();
             
-            // WorkflowItem'a FormItem ekle
+            // NodeData'dan assignmentType'ı al (JSON'dan parse et gerekirse)
+            string assignmentType = currentNode.Data?.assignmentType;
+            if (string.IsNullOrEmpty(assignmentType))
+            {
+                try
+                {
+                    var nodeDataJson = JsonConvert.SerializeObject(currentNode.Data);
+                    var nodeDataObj = JObject.Parse(nodeDataJson);
+                    assignmentType = nodeDataObj["assignmentType"]?.ToString();
+                }
+                catch
+                {
+                    // Parse hatası durumunda boş kalır
+                }
+            }
+            
+            // assignmentType'a göre kullanıcıları belirle
+            if (!string.IsNullOrEmpty(assignmentType) && 
+                _parameters?.UserManager != null && 
+                _parameters?.EmployeeAssignmentService != null)
+            {
+                try
+                {
+                    // ✅ THREADING FIX: Cache'lenmiş assignments'i kullan
+                    // Fallback kaldırıldı - PreloadAssignmentsAsync() veya Continue içinde cache doldurulmalı
+                    List<formneo.core.Models.EmployeeAssignment> allAssignments = _cachedAssignments;
+                    
+                    // Eğer cache yoksa, boş liste kullan (assignmentType işlemlerini atla)
+                    if (allAssignments == null)
+                    {
+                        allAssignments = new List<formneo.core.Models.EmployeeAssignment>();
+                    }
+                    
+                    switch (assignmentType.ToLower())
+                    {
+                        case "direct_manager":
+                            // Kullanıcının direkt manager'ı
+                            if (!string.IsNullOrEmpty(_ApiSendUser))
+                            {
+                                // ✅ LINQ to Objects (memory'de, DbContext yok)
+                                var now = DateTime.UtcNow;
+                                var activeAssignment = allAssignments
+                                    .Where(ea => ea.UserId == _ApiSendUser
+                                        && ea.AssignmentType == formneo.core.Models.AssignmentType.Primary
+                                        && ea.StartDate <= now
+                                        && (ea.EndDate == null || ea.EndDate > now))
+                                    .OrderByDescending(ea => ea.StartDate)
+                                    .FirstOrDefault();
+                                
+                                if (activeAssignment?.ManagerId != null)
+                                {
+                                    userIds.Add(activeAssignment.ManagerId);
+                                }
+                            }
+                            break;
+                            
+                        case "department_manager":
+                            // Seçilen departmanın manager'ı
+                            string selectedOrgUnitId = currentNode.Data?.selectedOrgUnit;
+                            if (string.IsNullOrEmpty(selectedOrgUnitId))
+                            {
+                                try
+                                {
+                                    var nodeDataJson = JsonConvert.SerializeObject(currentNode.Data);
+                                    var nodeDataObj = JObject.Parse(nodeDataJson);
+                                    selectedOrgUnitId = nodeDataObj["selectedOrgUnit"]?.ToString();
+                                }
+                                catch { }
+                            }
+                            
+                            if (!string.IsNullOrEmpty(selectedOrgUnitId) && Guid.TryParse(selectedOrgUnitId, out Guid orgUnitGuid))
+                            {
+                                // ✅ LINQ to Objects (memory'de, DbContext yok)
+                                var orgUnitAssignments = allAssignments
+                                    .FirstOrDefault(ea => ea.OrgUnitId == orgUnitGuid);
+                                
+                                if (orgUnitAssignments?.OrgUnit?.ManagerId != null)
+                                {
+                                    userIds.Add(orgUnitAssignments.OrgUnit.ManagerId);
+                                }
+                            }
+                            break;
+                            
+                        case "department_all":
+                            // Seçilen departmandaki tüm aktif kullanıcılar
+                            string selectedOrgUnitIdAll = currentNode.Data?.selectedOrgUnit;
+                            if (string.IsNullOrEmpty(selectedOrgUnitIdAll))
+                            {
+                                try
+                                {
+                                    var nodeDataJson = JsonConvert.SerializeObject(currentNode.Data);
+                                    var nodeDataObj = JObject.Parse(nodeDataJson);
+                                    selectedOrgUnitIdAll = nodeDataObj["selectedOrgUnit"]?.ToString();
+                                }
+                                catch { }
+                            }
+                            
+                            if (!string.IsNullOrEmpty(selectedOrgUnitIdAll) && Guid.TryParse(selectedOrgUnitIdAll, out Guid orgUnitGuidAll))
+                            {
+                                // ✅ LINQ to Objects (memory'de, DbContext yok)
+                                var now = DateTime.UtcNow;
+                                var departmentUsers = allAssignments
+                                    .Where(ea => ea.OrgUnitId == orgUnitGuidAll 
+                                        && ea.StartDate <= now 
+                                        && (ea.EndDate == null || ea.EndDate > now))
+                                    .Select(ea => ea.UserId)
+                                    .Distinct()
+                                    .ToList();
+                                
+                                userIds.AddRange(departmentUsers);
+                            }
+                            break;
+                            
+                        case "position":
+                            // Seçilen pozisyondaki tüm aktif kullanıcılar
+                            string selectedPositionId = currentNode.Data?.selectedPosition;
+                            if (string.IsNullOrEmpty(selectedPositionId))
+                            {
+                                try
+                                {
+                                    var nodeDataJson = JsonConvert.SerializeObject(currentNode.Data);
+                                    var nodeDataObj = JObject.Parse(nodeDataJson);
+                                    selectedPositionId = nodeDataObj["selectedPosition"]?.ToString();
+                                }
+                                catch { }
+                            }
+                            
+                            if (!string.IsNullOrEmpty(selectedPositionId) && Guid.TryParse(selectedPositionId, out Guid positionGuid))
+                            {
+                                // ✅ LINQ to Objects (memory'de, DbContext yok)
+                                var now = DateTime.UtcNow;
+                                var positionUsers = allAssignments
+                                    .Where(ea => ea.PositionId == positionGuid 
+                                        && ea.StartDate <= now 
+                                        && (ea.EndDate == null || ea.EndDate > now))
+                                    .Select(ea => ea.UserId)
+                                    .Distinct()
+                                    .ToList();
+                                
+                                userIds.AddRange(positionUsers);
+                            }
+                            break;
+                            
+                        case "manual":
+                            // selectionData.assignmentType'dan alınacak
+                            object selectionData = currentNode.Data?.selectionData;
+                            if (selectionData != null)
+                            {
+                                try
+                                {
+                                    var selectionDataJson = JsonConvert.SerializeObject(selectionData);
+                                    var selectionDataObj = JObject.Parse(selectionDataJson);
+                                    var manualAssignmentType = selectionDataObj["assignmentType"]?.ToString();
+                                    
+                                    // Manual assignmentType'a göre tekrar işle (recursive değil, sadece manual içindeki veriyi al)
+                                    var manualUserIds = selectionDataObj["userIds"]?.ToObject<List<string>>();
+                                    if (manualUserIds != null && manualUserIds.Count > 0)
+                                    {
+                                        userIds.AddRange(manualUserIds);
+                                    }
+                                }
+                                catch { }
+                            }
+                            break;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Hata durumunda log (production'da logger kullanılmalı)
+                    // Şimdilik boş bırakıyoruz, userIds boş kalır
+                }
+            }
+            
+            // Eğer assignmentType yoksa veya kullanıcı bulunamadıysa, varsayılan olarak _ApiSendUser'ı kullan
+            if (userIds.Count == 0)
+            {
+                userIds.Add(_ApiSendUser);
+            }
+            
+            // FormItem'ları oluştur
+            // Not: department_all ve position için birden fazla kullanıcı olabilir
+            // Herkes için FormItem oluşturulur ama sadece birinin doldurması yeterli (ilk dolduran görevi alır)
+            // FormInstance tek kalır (ilk dolduranın verisi kaydedilir)
             if (workFlowItem.formItems == null)
             {
                 workFlowItem.formItems = new List<FormItems>();
             }
-            workFlowItem.formItems.Add(formItem);
+            
+            // Her kullanıcı için FormItem oluştur
+            foreach (var userId in userIds.Distinct())
+            {
+                string formUserNameSurname = utils.GetNameAndSurnameAsync(userId).ToString();
+                
+                var formItem = new FormItems
+                {
+                    WorkflowItemId = workFlowItem.Id,
+                    FormDesign = formDesign,
+                    FormId = !string.IsNullOrEmpty(formId) && Guid.TryParse(formId, out Guid parsedFormId) ? parsedFormId : null,
+                    FormUserId = userId,  // ✅ UserId (Foreign Key)
+                    FormUserNameSurname = formUserNameSurname,  // Snapshot
+                    FormDescription = formDescription,
+                    FormTaskMessage = formTaskMessage, // FormTaskNode oluşturulurken kaydedilen mesaj
+                    FormItemStatus = FormItemStatus.Pending
+                };
+                
+                workFlowItem.formItems.Add(formItem);
+            }
             
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Pending;
             return ""; // Form doldurulana kadar durdur
@@ -732,19 +960,10 @@ public class Workflow
         // Parameter varsa (form doldurulduysa), completed yap ve devam et
         if (!string.IsNullOrEmpty(parameter))
         {
+            // WorkflowItem'ı Completed yap (workflow devam edecek)
+            // FormItem'ların Completed yapılması WorkFlowExecute.cs'de yapılacak
+            // Çünkü orada hangi kullanıcının doldurduğu bilgisi var (dto.UserName)
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
-            
-            // FormItem'ı güncelle (eğer varsa)
-            if (workFlowItem.formItems != null && workFlowItem.formItems.Count > 0)
-            {
-                var formItem = workFlowItem.formItems.FirstOrDefault();
-                if (formItem != null)
-                {
-                    formItem.FormItemStatus = FormItemStatus.Completed;
-                    // Parameter'dan form verilerini alabilirsiniz (JSON string olarak)
-                    // formItem.FormData = parameter;
-                }
-            }
         }
         
         // Düğüme bağlı çıkış bağlantılarını bulun

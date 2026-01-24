@@ -32,7 +32,11 @@ namespace formneo.service.Services
         {
             var list = _formItemsRepository.GetAll();
 
-            var ss = _formItemsRepository.GetAll().Include(e => e.WorkflowItem).ThenInclude(e => e.WorkflowHead).Include(e => e.Form).ToList();
+            var ss = _formItemsRepository.GetAll()
+                .Include(e => e.WorkflowItem).ThenInclude(e => e.WorkflowHead)
+                .Include(e => e.Form)
+                .Include(e => e.FormUser)  // ✅ Navigation property'yi include et
+                .ToList();
 
             var dto = _mapper.Map<List<FormItemsDto>>(ss.OrderByDescending(e => e.CreatedDate));
 

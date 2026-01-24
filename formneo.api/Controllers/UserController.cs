@@ -577,19 +577,19 @@ namespace formneo.api.Controllers
             if (string.IsNullOrWhiteSpace(userId))
             {
                 // userId verilmemişse, giriş yapan kullanıcının bilgilerini getir
-                var loginName = User.Identity.Name;
-                if (string.IsNullOrEmpty(loginName))
-                {
-                    return Unauthorized("User not authenticated");
-                }
+            var loginName = User.Identity.Name;
+            if (string.IsNullOrEmpty(loginName))
+            {
+                return Unauthorized("User not authenticated");
+            }
 
-                var loginUser = await _userManager.Users
-                    .Where(e => e.Email == loginName)
-                    .FirstOrDefaultAsync();
+            var loginUser = await _userManager.Users
+                .Where(e => e.Email == loginName)
+                .FirstOrDefaultAsync();
 
-                if (loginUser == null)
-                {
-                    return NotFound("User not found");
+            if (loginUser == null)
+            {
+                return NotFound("User not found");
                 }
 
                 targetUserId = loginUser.Id;
@@ -638,19 +638,19 @@ namespace formneo.api.Controllers
             if (string.IsNullOrWhiteSpace(userId))
             {
                 // userId verilmemişse, giriş yapan kullanıcının bilgilerini getir
-                var loginName = User.Identity.Name;
-                if (string.IsNullOrEmpty(loginName))
-                {
-                    return Unauthorized("User not authenticated");
-                }
+            var loginName = User.Identity.Name;
+            if (string.IsNullOrEmpty(loginName))
+            {
+                return Unauthorized("User not authenticated");
+            }
 
-                var loginUser = await _userManager.Users
-                    .Where(e => e.Email == loginName)
-                    .FirstOrDefaultAsync();
+            var loginUser = await _userManager.Users
+                .Where(e => e.Email == loginName)
+                .FirstOrDefaultAsync();
 
-                if (loginUser == null)
-                {
-                    return NotFound("User not found");
+            if (loginUser == null)
+            {
+                return NotFound("User not found");
                 }
 
                 targetUserId = loginUser.Id;

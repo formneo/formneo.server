@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -40,7 +40,14 @@ namespace formneo.api.Controllers
         public async Task<List<WorkFlowDefinationListDto>> All()
         {
             var definations = await _service.GetAllAsync();
-            var dto = _mapper.Map<List<WorkFlowDefinationListDto>>(definations);
+            var definationsList = definations.ToList();
+            var dto = _mapper.Map<List<WorkFlowDefinationListDto>>(definationsList);
+            // FormId ve FormName'i manuel olarak map et
+            for (int i = 0; i < definationsList.Count && i < dto.Count; i++)
+            {
+                dto[i].FormId = definationsList[i].FormId;
+                dto[i].FormName = definationsList[i].Form?.FormName;
+            }
             return dto;
         }
 
@@ -51,7 +58,31 @@ namespace formneo.api.Controllers
 
             var workFlowDefination = await _service.GetByIdStringGuidAsync(new Guid(id));
             var workFlowDefinationDto = _mapper.Map<WorkFlowDefinationListDto>(workFlowDefination);
+            // FormId ve FormName'i manuel olarak map et
+            workFlowDefinationDto.FormId = workFlowDefination?.FormId;
+            workFlowDefinationDto.FormName = workFlowDefination?.Form?.FormName;
             return workFlowDefinationDto;
+        }
+
+        /// <summary>
+        /// Workflow sayfası için definition'ı (JSON) döndürür
+        /// </summary>
+        [HttpGet("{id}/for-workflow")]
+        public async Task<ActionResult<WorkFlowDefinationDetailDto>> GetForWorkflow(string id)
+        {
+            if (!Guid.TryParse(id, out var guid))
+            {
+                return BadRequest("Geçersiz id formatı");
+            }
+
+            var workFlowDefination = await _service.GetByIdStringGuidAsync(guid);
+            if (workFlowDefination == null)
+            {
+                return NotFound("WorkFlowDefination bulunamadı");
+            }
+
+            var workFlowDefinationDto = _mapper.Map<WorkFlowDefinationDetailDto>(workFlowDefination);
+            return Ok(workFlowDefinationDto);
         }
 
         [HttpPost]

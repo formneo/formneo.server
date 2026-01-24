@@ -401,10 +401,42 @@ namespace formneo.service.Services
         {
             try
             {
-                var result = await _userManager.FindByNameAsync(username);
-                var token = await _userManager.GeneratePasswordResetTokenAsync(result);
-                var user = await _userManager.ResetPasswordAsync(result, token, newPassword);
-                return user != null ? true : false;
+                
+                var allUsers = await _userManager.Users.ToListAsync();
+                username = username?.Trim();
+
+                UserApp user = null;
+                if (!string.IsNullOrWhiteSpace(username) && username.Contains("@"))
+                {
+                    user = await _userManager.FindByEmailAsync(username);
+                }
+
+                if (user == null)
+                {
+                    user = await _userManager.FindByNameAsync(username);
+                }
+
+                if (user == null && !string.IsNullOrWhiteSpace(username))
+                {
+                    user = await _userManager.FindByIdAsync(username);
+                }
+                if (user == null && !string.IsNullOrWhiteSpace(username))
+                {
+                    var normalized = NormalizeTurkishCharacters(username).ToUpperInvariant();
+                    user = await _userManager.Users.FirstOrDefaultAsync(u =>
+                        u.Email == username ||
+                        u.UserName == username ||
+                        u.NormalizedEmail == normalized ||
+                        u.NormalizedUserName == normalized);
+                }
+                if (user == null)
+                {
+                    return false;
+                }
+
+                var token = await _userManager.GeneratePasswordResetTokenAsync(user);
+                var result = await _userManager.ResetPasswordAsync(user, token, newPassword);
+                return result.Succeeded;
             }
             catch (Exception ex)
             {

@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -75,10 +75,24 @@ namespace formneo.service.Mapping
             CreateMap<UserApp, UpdateUserDto>().ReverseMap();
             CreateMap<WorkFlowDefination, WorkFlowDefinationDto>().ReverseMap();
             CreateMap<WorkFlowDefination, WorkFlowDefinationDto>().ReverseMap();
-            CreateMap<ApproveItems, ApproveItemsDto>().ReverseMap();
+            
+            // ApproveItems mapping - Navigation property'den email al
+            CreateMap<ApproveItems, ApproveItemsDto>()
+                .ForMember(dest => dest.ApproveUser, opt => opt.MapFrom(src => 
+                    src.ApproveUser != null ? src.ApproveUser.Email ?? src.ApproveUser.UserName : src.ApproveUserId))
+                .ForMember(dest => dest.ApprovedUser_Runtime, opt => opt.MapFrom(src => 
+                    src.ApprovedUser_Runtime != null ? src.ApprovedUser_Runtime.Email ?? src.ApprovedUser_Runtime.UserName : src.ApprovedUser_RuntimeId))
+                .ReverseMap()
+                .ForMember(dest => dest.ApproveUser, opt => opt.Ignore())  // Navigation property'yi ignore et
+                .ForMember(dest => dest.ApprovedUser_Runtime, opt => opt.Ignore());  // Navigation property'yi ignore et
+            
+            // FormItems mapping - Navigation property'den email al
             CreateMap<FormItems, FormItemsDto>()
+                .ForMember(dest => dest.FormUser, opt => opt.MapFrom(src => 
+                    src.FormUser != null ? src.FormUser.Email ?? src.FormUser.UserName : src.FormUserId))
                 .ForMember(dest => dest.WorkFlowHead, opt => opt.MapFrom(src => src.WorkflowItem != null ? src.WorkflowItem.WorkflowHead : null))
-                .ReverseMap();
+                .ReverseMap()
+                .ForMember(dest => dest.FormUser, opt => opt.Ignore());  // Navigation property'yi ignore et
             CreateMap<WorkflowHead, WorkFlowHeadDto>().ReverseMap();
             CreateMap<Form, FormDataListDto>().ReverseMap();
             CreateMap<FormRuleEngineDto, FormRuleEngine>().ReverseMap();
@@ -171,9 +185,46 @@ namespace formneo.service.Mapping
             CreateMap<WorkFlowItemDtoWithApproveItems, WorkflowItem>().ReverseMap();
 
 
-            CreateMap<WorkFlowDefinationListDto, WorkFlowDefination>().ReverseMap();
-            CreateMap<WorkFlowDefinationInsertDto, WorkFlowDefination>().ReverseMap();
-            CreateMap<WorkFlowDefinationUpdateDto, WorkFlowDefination>().ReverseMap();
+            CreateMap<WorkFlowDefination, WorkFlowDefinationListDto>()
+                .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+                .ForMember(dest => dest.WorkflowName, opt => opt.MapFrom(src => src.WorkflowName))
+                .ForMember(dest => dest.IsActive, opt => opt.MapFrom(src => src.IsActive))
+                .ForMember(dest => dest.Revision, opt => opt.MapFrom(src => src.Revision))
+                .ForMember(dest => dest.FormId, opt => opt.MapFrom(src => src.FormId))
+                .ReverseMap();
+            CreateMap<WorkFlowDefination, WorkFlowDefinationDetailDto>()
+                .ForMember(dest => dest.Id, opt => opt.MapFrom(src => src.Id))
+                .ForMember(dest => dest.WorkflowName, opt => opt.MapFrom(src => src.WorkflowName))
+                .ForMember(dest => dest.Defination, opt => opt.MapFrom(src => src.Defination))
+                .ForMember(dest => dest.IsActive, opt => opt.MapFrom(src => src.IsActive))
+                .ForMember(dest => dest.Revision, opt => opt.MapFrom(src => src.Revision))
+                .ForMember(dest => dest.FormId, opt => opt.MapFrom(src => src.FormId))
+                .ReverseMap();
+            CreateMap<WorkFlowDefinationInsertDto, WorkFlowDefination>()
+                .ForMember(dest => dest.Id, opt => opt.Ignore())
+                .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.MainClientId, opt => opt.Ignore())
+                .ForMember(dest => dest.IsDelete, opt => opt.Ignore())
+                .ForMember(dest => dest.UniqNumber, opt => opt.Ignore())
+                .ForMember(dest => dest.ConcurrencyToken, opt => opt.Ignore())
+                .ForMember(dest => dest.workflows, opt => opt.Ignore())
+                .ForMember(dest => dest.Form, opt => opt.Ignore())
+                .ReverseMap();
+            CreateMap<WorkFlowDefinationUpdateDto, WorkFlowDefination>()
+                .ForMember(dest => dest.CreatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedDate, opt => opt.Ignore())
+                .ForMember(dest => dest.CreatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.UpdatedBy, opt => opt.Ignore())
+                .ForMember(dest => dest.MainClientId, opt => opt.Ignore())
+                .ForMember(dest => dest.IsDelete, opt => opt.Ignore())
+                .ForMember(dest => dest.UniqNumber, opt => opt.Ignore())
+                .ForMember(dest => dest.ConcurrencyToken, opt => opt.Ignore())
+                .ForMember(dest => dest.workflows, opt => opt.Ignore())
+                .ForMember(dest => dest.Form, opt => opt.Ignore())
+                .ReverseMap();
 
 
 

@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Identity;
@@ -75,6 +75,11 @@ namespace formneo.api.Controllers
         [HttpPost]
         public async Task<ActionResult<WorkFlowHeadDtoResultStartOrContinue>> Contiune(WorkFlowContiuneApiDto workFlowApiDto)
         {
+            // Validation: workFlowItemId is required
+            if (string.IsNullOrEmpty(workFlowApiDto.workFlowItemId))
+            {
+                return BadRequest(new { error = "workFlowItemId is required" });
+            }
 
             WorkFlowExecute execute = new WorkFlowExecute();
             WorkFlowDto workFlowDto = new WorkFlowDto();
@@ -93,7 +98,18 @@ namespace formneo.api.Controllers
 
             workFlowApiDto.UserName = User.Identity.Name;
 
-            var workFlowItem = await _workFlowItemservice.GetByIdStringGuidAsync(new Guid(workFlowApiDto.workFlowItemId));
+            // Validate GUID format
+            if (!Guid.TryParse(workFlowApiDto.workFlowItemId, out Guid workflowItemGuid))
+            {
+                return BadRequest(new { error = "Invalid workFlowItemId format" });
+            }
+
+            var workFlowItem = await _workFlowItemservice.GetByIdStringGuidAsync(workflowItemGuid);
+            if (workFlowItem == null)
+            {
+                return NotFound(new { error = $"WorkflowItem with id '{workFlowApiDto.workFlowItemId}' not found" });
+            }
+
             var workFlowHead = await _workFlowHeadService.GetByIdGuidAsync(new Guid(workFlowItem.WorkflowHeadId.ToString()));
 
 
@@ -201,6 +217,89 @@ namespace formneo.api.Controllers
         }
 
         /// <summary>
+        /// Dashboard metriklerini getirir (başlatılan, devam eden, bekleyen görevler)
+        // /// </summary>
+        // [HttpGet("dashboard-metrics")]
+        // public async Task<ActionResult<object>> GetDashboardMetrics()
+        // {
+        //     var userName = User.Identity.Name;
+        //     if (string.IsNullOrEmpty(userName))
+        //     {
+        //         return Unauthorized();
+        //     }
+        //
+        //     var currentUser = await _userManager.FindByNameAsync(userName);
+        //     if (currentUser == null)
+        //     {
+        //         return Unauthorized("User not found");
+        //     }
+        //     string userId = currentUser.Id;
+        //
+        //     // Devam eden süreç sayısı (CreateUser = ben ve InProgress)
+        //     var inProgressCount = await _workFlowHeadService.Where(w => 
+        //         w.CreateUser == userName && 
+        //         w.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress
+        //     ).CountAsync();
+        //
+        //     // Bekleyen görevler (FormItems + ApproveItems Pending)
+        //     var allFormItems = await _formItemsService.GetAllRelationTable();
+        //     var pendingFormTasksCount = allFormItems
+        //         .Where(e => e.FormItemStatus == FormItemStatus.Pending 
+        //             && e.FormUserId == userId  
+        //             && e.WorkFlowHead != null
+        //             && e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress)
+        //         .Count();
+        //
+        //     var approveItems = await _approveItemsService.GetAllRelationTable();
+        //     var pendingApproveTasksCount = approveItems
+        //         .Where(e => e.ApproverStatus == ApproverStatus.Pending 
+        //             && e.ApproveUserId == userId  
+        //             && e.WorkFlowHead != null
+        //             && e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress)
+        //         .Count();
+        //
+        //     var totalPendingTasks = pendingFormTasksCount + pendingApproveTasksCount;
+        //
+        //     return Ok(new
+        //     {
+        //         InProgressCount = inProgressCount,
+        //         PendingTasksCount = totalPendingTasks,
+        //         PendingFormTasksCount = pendingFormTasksCount,
+        //         PendingApproveTasksCount = pendingApproveTasksCount
+        //     });
+        // }
+
+        /// <summary>
+        // /// Benim başlattığım süreçleri getirir (CreateUser = ben)
+        // /// </summary>
+        // [HttpGet("my-initiated-workflows")]
+        // public async Task<ActionResult<List<WorkFlowHeadDto>>> GetMyInitiatedWorkflows()
+        // {
+        //     var userName = User.Identity.Name;
+        //     if (string.IsNullOrEmpty(userName))
+        //     {
+        //         return Unauthorized();
+        //     }
+        //
+        //     var currentUser = await _userManager.FindByNameAsync(userName);
+        //     if (currentUser == null)
+        //     {
+        //         return Unauthorized("User not found");
+        //     }
+        //
+        //     // Başlattığım workflow'ları getir
+        //     var myWorkflows = await _workFlowHeadService
+        //         .Where(w => w.CreateUser == userName)
+        //         .Include(w => w.WorkFlowDefination)
+        //         .OrderByDescending(w => w.CreatedDate)
+        //         .ToListAsync();
+        //
+        //     var workflowDtos = _mapper.Map<List<WorkFlowHeadDto>>(myWorkflows);
+        //
+        //     return Ok(workflowDtos);
+        // }
+
+        /// <summary>
         /// Kullanıcının pending task'larını getirir (FormTask ve UserTask)
         /// </summary>
         [HttpGet("my-tasks")]
@@ -212,7 +311,21 @@ namespace formneo.api.Controllers
                 return Unauthorized();
             }
 
+            // UserName'i UserId'ye çevir
+            var currentUser = await _userManager.FindByNameAsync(userName);
+            if (currentUser == null)
+            {
+                return Unauthorized("User not found");
+            }
+            string userId = currentUser.Id;
+
             var myTasks = new MyTasksDto();
+            
+            // EmployeeAssignment sorgusu için hazırlık (başlatan bilgileri için)
+            var employeeAssignmentsQuery = await _employeeAssignmentService.Include();
+            
+            // Başlatan kullanıcıları cache'lemek için dictionary
+            var starterUsersCache = new Dictionary<string, (string adSoyad, string departman, string pozisyon)>();
 
             // FormTask'ları getir (FormTaskNode için - FormItems)
             // GetAllRelationTable kullanarak tüm FormItems'ları al, sonra filtrele
@@ -229,7 +342,7 @@ namespace formneo.api.Controllers
             
             var pendingFormItems = allFormItems
                 .Where(e => e.FormItemStatus == FormItemStatus.Pending 
-                    && e.FormUser == userName
+                    && e.FormUserId == userId  // ✅ UserId ile karşılaştır
                     && e.WorkFlowHead != null
                     && e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress)
                 .OrderByDescending(e => e.CreatedDate)
@@ -243,6 +356,50 @@ namespace formneo.api.Controllers
                 if (formItem.workFlowItem != null && formItem.workFlowItem.WorkflowHead != null && !string.IsNullOrEmpty(formItem.workFlowItem.WorkflowHead.id))
                 {
                     workflowHeadId = new Guid(formItem.workFlowItem.WorkflowHead.id);
+                }
+                
+                // Başlatan bilgilerini al
+                string baslatanAdSoyad = "";
+                string baslatanDepartman = "";
+                string baslatanPozisyon = "";
+                
+                if (formItem.WorkFlowHead != null && !string.IsNullOrEmpty(formItem.WorkFlowHead.CreateUser))
+                {
+                    var createUserEmail = formItem.WorkFlowHead.CreateUser;
+                    
+                    // Cache'de var mı kontrol et
+                    if (!starterUsersCache.ContainsKey(createUserEmail))
+                    {
+                        var starterUser = await _userManager.FindByNameAsync(createUserEmail);
+                        if (starterUser != null)
+                        {
+                            baslatanAdSoyad = $"{starterUser.FirstName} {starterUser.LastName}".Trim();
+                            
+                            // EmployeeAssignment'tan departman ve pozisyon al
+                            var starterAssignment = employeeAssignmentsQuery
+                                .Where(ea => ea.UserId == starterUser.Id 
+                                    && (ea.EndDate == null || ea.EndDate > DateTime.UtcNow)
+                                    && ea.AssignmentType == AssignmentType.Primary)
+                                .Include(ea => ea.OrgUnit)
+                                .Include(ea => ea.Position)
+                                .OrderByDescending(ea => ea.StartDate)
+                                .FirstOrDefault();
+                            
+                            baslatanDepartman = starterAssignment?.OrgUnit?.Name ?? "";
+                            baslatanPozisyon = starterAssignment?.Position?.Name ?? "";
+                            
+                            // Cache'e ekle
+                            starterUsersCache[createUserEmail] = (baslatanAdSoyad, baslatanDepartman, baslatanPozisyon);
+                        }
+                    }
+                    else
+                    {
+                        // Cache'den al
+                        var cached = starterUsersCache[createUserEmail];
+                        baslatanAdSoyad = cached.adSoyad;
+                        baslatanDepartman = cached.departman;
+                        baslatanPozisyon = cached.pozisyon;
+                    }
                 }
                 
                 // WorkFlowHead'i kopyala ve circular reference'ı kır
@@ -285,7 +442,10 @@ namespace formneo.api.Controllers
                     WorkFlowHead = workFlowHeadDto,
                     WorkFlowItem = workFlowItemDto,
                     CreatedDate = formItem.CreatedDate,
-                    UniqNumber = formItem.UniqNumber
+                    UniqNumber = formItem.WorkFlowHead?.UniqNumber ?? 0,  // WorkflowHead'in UniqNumber'ı (ana süreç numarası)
+                    BaslatanAdSoyad = baslatanAdSoyad,
+                    BaslatanDepartman = baslatanDepartman,
+                    BaslatanPozisyon = baslatanPozisyon
                 };
                 myTasks.FormTasks.Add(formTaskDto);
             }
@@ -294,7 +454,7 @@ namespace formneo.api.Controllers
             var approveItems = await _approveItemsService.GetAllRelationTable();
             var pendingApproveItems = approveItems
                 .Where(e => e.ApproverStatus == ApproverStatus.Pending 
-                    && e.ApproveUser == userName
+                    && e.ApproveUserId == userId  // ✅ UserId ile karşılaştır
                     && e.WorkFlowHead != null
                     && e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress)
                 .OrderByDescending(e => e.CreatedDate)
@@ -308,6 +468,50 @@ namespace formneo.api.Controllers
                 if (approveItem.workFlowItem != null && approveItem.workFlowItem.WorkflowHead != null && !string.IsNullOrEmpty(approveItem.workFlowItem.WorkflowHead.id))
                 {
                     workflowHeadId = new Guid(approveItem.workFlowItem.WorkflowHead.id);
+                }
+                
+                // Başlatan bilgilerini al
+                string baslatanAdSoyad = "";
+                string baslatanDepartman = "";
+                string baslatanPozisyon = "";
+                
+                if (approveItem.WorkFlowHead != null && !string.IsNullOrEmpty(approveItem.WorkFlowHead.CreateUser))
+                {
+                    var createUserEmail = approveItem.WorkFlowHead.CreateUser;
+                    
+                    // Cache'de var mı kontrol et
+                    if (!starterUsersCache.ContainsKey(createUserEmail))
+                    {
+                        var starterUser = await _userManager.FindByNameAsync(createUserEmail);
+                        if (starterUser != null)
+                        {
+                            baslatanAdSoyad = $"{starterUser.FirstName} {starterUser.LastName}".Trim();
+                            
+                            // EmployeeAssignment'tan departman ve pozisyon al
+                            var starterAssignment = employeeAssignmentsQuery
+                                .Where(ea => ea.UserId == starterUser.Id 
+                                    && (ea.EndDate == null || ea.EndDate > DateTime.UtcNow)
+                                    && ea.AssignmentType == AssignmentType.Primary)
+                                .Include(ea => ea.OrgUnit)
+                                .Include(ea => ea.Position)
+                                .OrderByDescending(ea => ea.StartDate)
+                                .FirstOrDefault();
+                            
+                            baslatanDepartman = starterAssignment?.OrgUnit?.Name ?? "";
+                            baslatanPozisyon = starterAssignment?.Position?.Name ?? "";
+                            
+                            // Cache'e ekle
+                            starterUsersCache[createUserEmail] = (baslatanAdSoyad, baslatanDepartman, baslatanPozisyon);
+                        }
+                    }
+                    else
+                    {
+                        // Cache'den al
+                        var cached = starterUsersCache[createUserEmail];
+                        baslatanAdSoyad = cached.adSoyad;
+                        baslatanDepartman = cached.departman;
+                        baslatanPozisyon = cached.pozisyon;
+                    }
                 }
                 
                 // WorkFlowHead'i kopyala ve circular reference'ı kır
@@ -342,13 +546,16 @@ namespace formneo.api.Controllers
                     WorkflowHeadId = workflowHeadId,
                     ShortId = approveItem.ShortId,
                     ShortWorkflowItemId = approveItem.ShortWorkflowItemId,
-                    ApproveUser = approveItem.ApproveUser,
+                    ApproveUser = approveItem.ApproveUser,  // ✅ DTO zaten AutoMapper'dan geldi, email içeriyor
                     ApproveUserNameSurname = approveItem.ApproveUserNameSurname,
                     ApproverStatus = approveItem.ApproverStatus,
                     WorkFlowHead = userWorkFlowHeadDto,
                     WorkFlowItem = userWorkFlowItemDto,
                     CreatedDate = approveItem.CreatedDate,
-                    UniqNumber = approveItem.UniqNumber
+                    UniqNumber = approveItem.WorkFlowHead?.UniqNumber ?? 0,  // WorkflowHead'in UniqNumber'ı (ana süreç numarası)
+                    BaslatanAdSoyad = baslatanAdSoyad,
+                    BaslatanDepartman = baslatanDepartman,
+                    BaslatanPozisyon = baslatanPozisyon
                 };
                 myTasks.UserTasks.Add(userTaskDto);
             }
@@ -374,8 +581,8 @@ namespace formneo.api.Controllers
             var workflowItemsQuery = await _workFlowItemService.Include();
             var itemsWithApproves = workflowItemsQuery
                 .Where(e => e.WorkflowHeadId == id)
-                .Include(e => e.approveItems)
-                .Include(e => e.formItems)
+                .Include(e => e.approveItems).ThenInclude(a => a.ApproveUser)  // ✅ Navigation property
+                .Include(e => e.formItems).ThenInclude(f => f.FormUser)  // ✅ Navigation property
                 .ToList();
             
             // Workflow definition'dan nodes ve edges bilgilerini al
@@ -437,13 +644,21 @@ namespace formneo.api.Controllers
                 return Unauthorized();
             }
 
+            // UserName'i UserId'ye çevir
+            var currentUser = await _userManager.FindByNameAsync(userName);
+            if (currentUser == null)
+            {
+                return Unauthorized("User not found");
+            }
+            string userId = currentUser.Id;
+
             // WorkflowItem'ı bul - formItems ve approveItems ile birlikte
             var workflowItemQuery = await _workFlowItemService.Include();
             var workflowItem = workflowItemQuery
                 .Where(e => e.Id == workflowItemId)
                 .Include(e => e.WorkflowHead)
-                .Include(e => e.formItems)
-                .Include(e => e.approveItems)
+                .Include(e => e.formItems).ThenInclude(f => f.FormUser)  // ✅ Navigation property
+                .Include(e => e.approveItems).ThenInclude(a => a.ApproveUser)  // ✅ Navigation property
                 .FirstOrDefault();
 
             if (workflowItem == null)
@@ -469,7 +684,7 @@ namespace formneo.api.Controllers
             {
                 // FormTaskNode için FormItem'ı bul
                 var formItem = workflowItem.formItems?
-                    .Where(e => e.FormUser == userName && e.FormItemStatus == FormItemStatus.Pending)
+                    .Where(e => e.FormUserId == userId && e.FormItemStatus == FormItemStatus.Pending)  // ✅ UserId ile karşılaştır
                     .OrderByDescending(e => e.CreatedDate)
                     .FirstOrDefault();
 
@@ -540,7 +755,7 @@ namespace formneo.api.Controllers
                     FormItemId = formItem.Id,
                     FormTaskMessage = formItem.FormTaskMessage,
                     FormDescription = formItem.FormDescription,
-                    FormUser = formItem.FormUser,
+                    FormUser = formItem.FormUser?.UserName ?? formItem.FormUserId,  // ✅ Navigation property'den email al
                     FormItemStatus = formItem.FormItemStatus
                 };
             }
@@ -548,7 +763,7 @@ namespace formneo.api.Controllers
             {
                 // ApproverNode için ApproveItem'ı bul
                 var approveItem = workflowItem.approveItems?
-                    .Where(e => e.ApproveUser == userName && e.ApproverStatus == ApproverStatus.Pending)
+                    .Where(e => e.ApproveUserId == userId && e.ApproverStatus == ApproverStatus.Pending)  // ✅ UserId ile karşılaştır
                     .OrderByDescending(e => e.CreatedDate)
                     .FirstOrDefault();
 
@@ -630,7 +845,7 @@ namespace formneo.api.Controllers
                     FormId = formId,
                     // UserTask detayları
                     ApproveItemId = approveItem.Id,
-                    ApproveUser = approveItem.ApproveUser,
+                    ApproveUser = approveItem.ApproveUser?.UserName ?? approveItem.ApproveUserId,  // ✅ Navigation property'den
                     ApproveUserNameSurname = approveItem.ApproveUserNameSurname,
                     ApproverStatus = approveItem.ApproverStatus,
                     WorkFlowDescription = approveItem.WorkFlowDescription
@@ -649,6 +864,228 @@ namespace formneo.api.Controllers
         {
 
 
+        }
+
+        /// <summary>
+        /// Kullanıcının başlattığı tüm formları listeler
+        /// </summary>
+        [HttpGet]
+        public async Task<ActionResult<MyStartedFormsResultDto>> GetMyStartedForms()
+        {
+            var userName = User.Identity.Name;
+            if (string.IsNullOrEmpty(userName))
+            {
+                return Unauthorized("Kullanıcı bulunamadı");
+            }
+
+            // Kullanıcının başlattığı tüm workflow'ları getir
+            var workflowHeadsQuery = await _workFlowHeadService.Include();
+            var myStartedWorkflows = await workflowHeadsQuery
+                .Where(w => w.CreateUser == userName && !w.IsDelete)
+                .Include(w => w.WorkFlowDefination)
+                .Include(w => w.Form)
+                .OrderByDescending(w => w.CreatedDate)
+                .ToListAsync();
+
+            // Başlatan kullanıcının bilgilerini al
+            var currentUser = await _userManager.FindByNameAsync(userName);
+            if (currentUser == null)
+            {
+                return Unauthorized("Kullanıcı bilgileri bulunamadı");
+            }
+
+            // Aktif EmployeeAssignment'ı al (departman ve pozisyon bilgileri için)
+            var employeeAssignmentsQuery = await _employeeAssignmentService.Include();
+            var activeAssignment = employeeAssignmentsQuery
+                .Where(ea => ea.UserId == currentUser.Id 
+                    && (ea.EndDate == null || ea.EndDate > DateTime.UtcNow)
+                    && ea.AssignmentType == AssignmentType.Primary)
+                .Include(ea => ea.OrgUnit)
+                .Include(ea => ea.Position)
+                .OrderByDescending(ea => ea.StartDate)
+                .FirstOrDefault();
+
+            // Kullanıcı bilgilerini oluştur
+            var baslatanAdSoyad = $"{currentUser.FirstName} {currentUser.LastName}".Trim();
+            var departman = activeAssignment?.OrgUnit?.Name ?? "Belirtilmemiş";
+            var pozisyon = activeAssignment?.Position?.Name ?? "Belirtilmemiş";
+
+            // FormItems ve ApproveItems'ları getir (kimde bekliyor bilgisi için)
+            var allFormItems = await _formItemsService.GetAllRelationTable();
+            var allApproveItems = await _approveItemsService.GetAllRelationTable();
+
+            // Sonuçları oluştur
+            var result = new List<MyStartedFormDto>();
+            
+            foreach (var w in myStartedWorkflows)
+            {
+                string kimdeOnayda = "";
+                string bekleyenKullaniciAdi = "";
+                string bekleyenKullaniciDepartman = "";
+                string bekleyenKullaniciPozisyon = "";
+                string mevcutAdim = w.CurrentNodeName ?? "Başlangıç";  // Varsayılan değer
+
+                // Eğer workflow devam ediyorsa, kimde bekliyor bilgisini bul
+                if (w.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress)
+                {
+                    // Önce FormItems'da pending olanı ara
+                    var pendingFormItem = allFormItems
+                        .Where(fi => fi.WorkFlowHead != null 
+                            && fi.WorkFlowHead.UniqNumber == w.UniqNumber 
+                            && fi.FormItemStatus == FormItemStatus.Pending)
+                        .FirstOrDefault();
+
+                    if (pendingFormItem != null && !string.IsNullOrEmpty(pendingFormItem.FormUserId))
+                    {
+                        var pendingUser = await _userManager.FindByIdAsync(pendingFormItem.FormUserId);
+                        if (pendingUser != null)
+                        {
+                            bekleyenKullaniciAdi = $"{pendingUser.FirstName} {pendingUser.LastName}".Trim();
+                            
+                            // Bekleyen kullanıcının departman ve pozisyon bilgisini al
+                            var pendingUserAssignment = employeeAssignmentsQuery
+                                .Where(ea => ea.UserId == pendingUser.Id 
+                                    && (ea.EndDate == null || ea.EndDate > DateTime.UtcNow)
+                                    && ea.AssignmentType == AssignmentType.Primary)
+                                .Include(ea => ea.OrgUnit)
+                                .Include(ea => ea.Position)
+                                .FirstOrDefault();
+
+                            bekleyenKullaniciDepartman = pendingUserAssignment?.OrgUnit?.Name ?? "";
+                            bekleyenKullaniciPozisyon = pendingUserAssignment?.Position?.Name ?? "";
+                            kimdeOnayda = "Form Doldurma";
+                            
+                            // Mevcut adım: Pending olan item'ın NodeName'i
+                            mevcutAdim = pendingFormItem.workFlowItem?.NodeName ?? mevcutAdim;
+                        }
+                    }
+
+                    // FormItem yoksa ApproveItems'da pending olanı ara
+                    if (string.IsNullOrEmpty(bekleyenKullaniciAdi))
+                    {
+                        var pendingApproveItem = allApproveItems
+                            .Where(ai => ai.WorkFlowHead != null 
+                                && ai.WorkFlowHead.UniqNumber == w.UniqNumber 
+                                && ai.ApproverStatus == ApproverStatus.Pending)
+                            .FirstOrDefault();
+
+                        if (pendingApproveItem != null && !string.IsNullOrEmpty(pendingApproveItem.ApproveUserId))
+                        {
+                            var pendingUser = await _userManager.FindByIdAsync(pendingApproveItem.ApproveUserId);
+                            if (pendingUser != null)
+                            {
+                                bekleyenKullaniciAdi = $"{pendingUser.FirstName} {pendingUser.LastName}".Trim();
+                                
+                                // Bekleyen kullanıcının departman ve pozisyon bilgisini al
+                                var pendingUserAssignment = employeeAssignmentsQuery
+                                    .Where(ea => ea.UserId == pendingUser.Id 
+                                        && (ea.EndDate == null || ea.EndDate > DateTime.UtcNow)
+                                        && ea.AssignmentType == AssignmentType.Primary)
+                                    .Include(ea => ea.OrgUnit)
+                                    .Include(ea => ea.Position)
+                                    .FirstOrDefault();
+
+                                bekleyenKullaniciDepartman = pendingUserAssignment?.OrgUnit?.Name ?? "";
+                                bekleyenKullaniciPozisyon = pendingUserAssignment?.Position?.Name ?? "";
+                                kimdeOnayda = "Onay";
+                                
+                                // Mevcut adım: Pending olan item'ın NodeName'i
+                                mevcutAdim = pendingApproveItem.workFlowItem?.NodeName ?? mevcutAdim;
+                            }
+                        }
+                    }
+                }
+
+                result.Add(new MyStartedFormDto
+                {
+                    Id = w.Id,
+                    SurecAdi = w.WorkflowName ?? w.WorkFlowDefination?.WorkflowName ?? "Bilinmiyor",
+                    Baslatan = w.CreateUser,
+                    BaslatanAdSoyad = baslatanAdSoyad,
+                    BaslatanDepartman = departman,
+                    BaslatanPozisyon = pozisyon,
+                    MevcutAdim = mevcutAdim,  // Pending olan item'ın NodeName'i
+                    BaslangicTarihi = w.CreatedDate,
+                    Sure = CalculateDuration(w.CreatedDate),
+                    SureDetayli = FormatDuration(w.CreatedDate),
+                    Durum = GetStatusText(w.workFlowStatus),
+                    DurumEnum = w.workFlowStatus,
+                    FormAdi = w.Form?.FormName ?? "",
+                    WorkFlowDefinationId = w.WorkFlowDefinationId,
+                    UniqNumber = w.UniqNumber,
+                    // Kimde bekliyor bilgileri
+                    KimdeOnayda = kimdeOnayda,
+                    BekleyenKullanici = bekleyenKullaniciAdi,
+                    BekleyenDepartman = bekleyenKullaniciDepartman,
+                    BekleyenPozisyon = bekleyenKullaniciPozisyon
+                });
+            }
+
+            var responseDto = new MyStartedFormsResultDto
+            {
+                TotalCount = result.Count,
+                Data = result
+            };
+
+            return Ok(responseDto);
+        }
+
+        /// <summary>
+        /// Tarih farkını gün cinsinden hesaplar
+        /// </summary>
+        private int CalculateDuration(DateTime startDate)
+        {
+            // Database'den gelen tarih zaten local time (GmtPlus3)
+            var duration = DateTime.Now - startDate;
+            return (int)duration.TotalDays;
+        }
+
+        /// <summary>
+        /// Tarih farkını okunabilir formatta döner
+        /// </summary>
+        private string FormatDuration(DateTime startDate)
+        {
+            // Database'den gelen tarih zaten local time (GmtPlus3)
+            var duration = DateTime.Now - startDate;
+            
+            if (duration.TotalMinutes < 60)
+            {
+                return $"{(int)duration.TotalMinutes} dakika önce";
+            }
+            else if (duration.TotalHours < 24)
+            {
+                return $"{(int)duration.TotalHours} saat önce";
+            }
+            else if (duration.TotalDays < 30)
+            {
+                return $"{(int)duration.TotalDays} gün önce";
+            }
+            else if (duration.TotalDays < 365)
+            {
+                int months = (int)(duration.TotalDays / 30);
+                return $"{months} ay önce";
+            }
+            else
+            {
+                int years = (int)(duration.TotalDays / 365);
+                return $"{years} yıl önce";
+            }
+        }
+
+        /// <summary>
+        /// WorkflowStatus enum'unu Türkçe metne çevirir
+        /// </summary>
+        private string GetStatusText(formneo.core.Models.WorkflowStatus? status)
+        {
+            return status switch
+            {
+                formneo.core.Models.WorkflowStatus.NotStarted => "Başlamadı",
+                formneo.core.Models.WorkflowStatus.InProgress => "Devam Ediyor",
+                formneo.core.Models.WorkflowStatus.Completed => "Tamamlandı",
+                formneo.core.Models.WorkflowStatus.Pending => "Beklemede",
+                formneo.core.Models.WorkflowStatus.SendBack => "Geri Gönderildi",
+                _ => "Bilinmiyor"
+            };
         }
 
     }

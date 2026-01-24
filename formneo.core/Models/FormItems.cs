@@ -31,12 +31,18 @@ namespace formneo.core.Models
         public Guid? FormId { get; set; }
 
         /// <summary>
-        /// Formu dolduran kullanıcı
+        /// Formu dolduran/dolduracak kullanıcı ID (Foreign Key - AspNetUsers.Id)
         /// </summary>
-        public string? FormUser { get; set; }
+        [ForeignKey("FormUser")]
+        public string FormUserId { get; set; }
 
         /// <summary>
-        /// Formu dolduran kullanıcının adı soyadı
+        /// Kullanıcı navigation property
+        /// </summary>
+        public virtual UserApp FormUser { get; set; }
+
+        /// <summary>
+        /// Formu dolduran kullanıcının adı soyadı (Snapshot - değişmez, tarihsel kayıt)
         /// </summary>
         public string? FormUserNameSurname { get; set; }
 

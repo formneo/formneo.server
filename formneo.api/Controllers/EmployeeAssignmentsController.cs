@@ -283,7 +283,9 @@ namespace formneo.api.Controllers
                 }
 
                 await _unitOfWork.CommitAsync();
-                return CreatedAtAction(nameof(GetById), new { id = result.Data.Id }, result.Data);
+                
+                // Oluşturulan veriyi döndür
+                return Ok(result.Data);
             }
             catch (Exception ex)
             {
@@ -304,92 +306,90 @@ namespace formneo.api.Controllers
             _unitOfWork.BeginTransaction();
             try
             {
-                var existing = await _employeeAssignments.GetByIdGuidAsync(dto.Id);
-                if (existing.StatusCode < 200 || existing.StatusCode >= 300)
+                var unitOfWork = _unitOfWork as UnitOfWork;
+                if (unitOfWork == null)
+                {
+                    return StatusCode(500, "UnitOfWork context not available");
+                }
+
+                // Entity'yi context'ten direkt al (track edilmiş olacak)
+                var entity = await unitOfWork._context.EmployeeAssignments
+                    .FirstOrDefaultAsync(ea => ea.Id == dto.Id);
+                
+                if (entity == null)
                 {
                     return NotFound("Assignment not found");
                 }
-
-                var existingAssignment = existing.Data;
                 
                 // ManagerId belirtilmemişse ve OrgUnitId varsa, OrgUnit'in ManagerId'sini kullan
                 if (string.IsNullOrEmpty(dto.ManagerId) && dto.OrgUnitId.HasValue)
                 {
-                    var unitOfWork = _unitOfWork as UnitOfWork;
-                    if (unitOfWork != null)
+                    var orgUnit = await unitOfWork._context.OrgUnits
+                        .FirstOrDefaultAsync(ou => ou.Id == dto.OrgUnitId.Value);
+                    
+                    if (orgUnit != null && !string.IsNullOrEmpty(orgUnit.ManagerId))
                     {
-                        var orgUnit = await unitOfWork._context.OrgUnits
-                            .FirstOrDefaultAsync(ou => ou.Id == dto.OrgUnitId.Value);
-                        
-                        if (orgUnit != null && !string.IsNullOrEmpty(orgUnit.ManagerId))
-                        {
-                            dto.ManagerId = orgUnit.ManagerId;
-                        }
+                        dto.ManagerId = orgUnit.ManagerId;
                     }
                 }
 
-                // Mevcut assignment'ı kopyala ve sadece DTO'da belirtilen alanları güncelle
-                var assignment = _mapper.Map<EmployeeAssignment>(existingAssignment);
-                _mapper.Map(dto, assignment); // DTO'dan gelen değerleri uygula
+                // Sadece DTO'da belirtilen alanları güncelle
+                if (dto.OrgUnitId.HasValue)
+                {
+                    entity.OrgUnitId = dto.OrgUnitId.Value;
+                }
                 
-                // Mevcut değerleri koru (mapping'de ignore edilen alanlar için)
-                assignment.UserId = existingAssignment.UserId;
+                if (dto.PositionId.HasValue)
+                {
+                    entity.PositionId = dto.PositionId.Value;
+                }
                 
-                // StartDate: DTO'da belirtilmişse güncelle, yoksa mevcut değeri koru
+                if (!string.IsNullOrEmpty(dto.ManagerId))
+                {
+                    entity.ManagerId = dto.ManagerId;
+                }
+                
+                // StartDate: DTO'da belirtilmişse güncelle
                 if (dto.StartDate.HasValue)
                 {
-                    assignment.StartDate = dto.StartDate.Value;
-                }
-                else
-                {
-                    assignment.StartDate = existingAssignment.StartDate;
+                    entity.StartDate = dto.StartDate.Value;
                 }
                 
                 // EndDate kontrolü
                 if (dto.EndDate.HasValue)
                 {
-                    assignment.EndDate = dto.EndDate.Value;
-                    // EndDate, StartDate'den önce olamaz
-                    if (assignment.EndDate < assignment.StartDate)
+                    var startDate = dto.StartDate ?? entity.StartDate;
+                    if (dto.EndDate.Value < startDate)
                     {
                         _unitOfWork.Rollback();
                         return BadRequest("EndDate cannot be earlier than StartDate");
                     }
-                }
-                else
-                {
-                    assignment.EndDate = existingAssignment.EndDate;
+                    entity.EndDate = dto.EndDate.Value;
                 }
                 
-                // AssignmentType ve Notes: DTO'da belirtilmişse güncelle
+                // AssignmentType: DTO'da belirtilmişse güncelle
                 if (dto.AssignmentType != default(AssignmentType))
                 {
-                    assignment.AssignmentType = dto.AssignmentType;
-                }
-                else
-                {
-                    assignment.AssignmentType = existingAssignment.AssignmentType;
+                    entity.AssignmentType = dto.AssignmentType;
                 }
                 
+                // Notes: DTO'da belirtilmişse güncelle
                 if (dto.Notes != null)
                 {
-                    assignment.Notes = dto.Notes;
-                }
-                else
-                {
-                    assignment.Notes = existingAssignment.Notes;
+                    entity.Notes = dto.Notes;
                 }
 
-                var result = await _employeeAssignments.UpdateAsync(_mapper.Map<EmployeeAssignmentListDto>(assignment));
-                
-                if (result.StatusCode < 200 || result.StatusCode >= 300)
-                {
-                    _unitOfWork.Rollback();
-                    return BadRequest(result.Errors);
-                }
-
+                // Entity zaten track ediliyor, sadece commit et
                 await _unitOfWork.CommitAsync();
-                return NoContent();
+                
+                // Güncellenmiş veriyi getir ve döndür
+                var updated = await _employeeAssignments.GetByIdGuidAsync(dto.Id);
+                if (updated.StatusCode < 200 || updated.StatusCode >= 300)
+                {
+                    return StatusCode(500, "Failed to retrieve updated assignment");
+                }
+                
+                return Ok(updated.Data);
             }
             catch (Exception ex)
             {

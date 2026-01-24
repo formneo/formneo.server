@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,6 +19,8 @@ namespace formneo.core.DTOs
         public Boolean IsActive { get; set; }
 
         public int Revision { get; set; }
+
+        public Guid? FormId { get; set; }
 
 
 

@@ -36,7 +36,12 @@ namespace formneo.core.DTOs
         public Guid? FormId { get; set; }
 
         /// <summary>
-        /// Formu dolduran kullanıcı
+        /// Formu dolduran/dolduracak kullanıcı ID (Foreign Key)
+        /// </summary>
+        public string FormUserId { get; set; }
+
+        /// <summary>
+        /// Formu dolduran kullanıcı email/username (display için)
         /// </summary>
         public string? FormUser { get; set; }
 

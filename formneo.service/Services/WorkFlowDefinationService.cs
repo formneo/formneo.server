@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
@@ -18,7 +18,7 @@ namespace formneo.service.Services
     {
 
         private readonly IWorkFlowDefinationRepository _workFlowDefinationRepository;
-
+        private readonly IGenericRepository<WorkFlowDefination> _repository;
 
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
@@ -26,6 +26,7 @@ namespace formneo.service.Services
         public WorkFlowDefinationService(IGenericRepository<WorkFlowDefination> repository, IUnitOfWork unitOfWork, IMapper mapper, IWorkFlowDefinationRepository workFlowRepository) : base(repository, unitOfWork)
         {
             _mapper = mapper;
+            _repository = repository;
 
             //var s=  workFlowItemRepository.GetAll();
 
@@ -33,6 +34,16 @@ namespace formneo.service.Services
 
 
             _unitOfWork = unitOfWork;
+        }
+
+        public override async Task<IEnumerable<WorkFlowDefination>> GetAllAsync()
+        {
+            return await _repository.GetAll().Include(w => w.Form).ToListAsync();
+        }
+
+        public override async Task<WorkFlowDefination> GetByIdStringGuidAsync(Guid id)
+        {
+            return await _repository.GetAll().Include(w => w.Form).FirstOrDefaultAsync(w => w.Id == id);
         }
 
 

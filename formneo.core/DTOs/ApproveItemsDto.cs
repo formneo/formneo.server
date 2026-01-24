@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -27,7 +27,24 @@ namespace formneo.core.DTOs
         public string ShortId { get; set; }
         public string ShortWorkflowItemId { get; set; }
 
+        /// <summary>
+        /// Onaylayacak kullanıcı ID (Foreign Key)
+        /// </summary>
+        public string ApproveUserId { get; set; }
+
+        /// <summary>
+        /// Onaylayacak kullanıcı email/username (display için)
+        /// </summary>
         public string ApproveUser { get; set; }
+
+        /// <summary>
+        /// Runtime'da onaylayan kullanıcı ID (Foreign Key)
+        /// </summary>
+        public string? ApprovedUser_RuntimeId { get; set; }
+
+        /// <summary>
+        /// Runtime'da onaylayan kullanıcı email/username (display için)
+        /// </summary>
         public string? ApprovedUser_Runtime { get; set; }
 
 

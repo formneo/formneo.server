@@ -315,3 +315,8 @@ public class Positions : BaseEntity
 - `formneo.repository/Configurations/EmployeeAssignmentConfiguration.cs`
 
 
+
+
+
+
+
