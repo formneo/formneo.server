@@ -661,13 +661,23 @@ public class Workflow
 
     private async Task<string> ExecuteFormTaskNode(WorkflowNode currentNode, WorkflowItem workFlowItem, string parameter)
     {
-        // FormTaskNode işleme mantığı:
-        // Parameter boşsa → FormItem oluştur ve pending yap
-        // Parameter varsa (form doldurulduysa) → completed yap ve devam et
+        // ============================================================
+        // FormTaskNode işleme mantığı (İKİ DURUM - SADE VE TEMİZ):
+        // ============================================================
+        // 1. START (parameter == ""):
+        //    - YENİ FormItem oluştur (HER ZAMAN Pending!)
+        //    - return "" → Workflow DURDUR
+        //
+        // 2. CONTINUE (parameter != ""):
+        //    - WorkflowItem'ı Completed yap
+        //    - return nextNode → Workflow DEVAM ET
+        //    - NOT: FormItem güncellemesi NodeCompletionHandler'da yapılır!
+        // ============================================================
         
+        // DURUM 1: START - FormItem Oluştur (HER ZAMAN Pending!)
         if (parameter == "")
         {
-            // FormTaskNode'a ilk gelindiğinde FormItem oluştur
+            
             _workFlowItems.Add(workFlowItem);
             
             Utils utils = new Utils();
@@ -943,32 +953,38 @@ public class Workflow
                     WorkflowItemId = workFlowItem.Id,
                     FormDesign = formDesign,
                     FormId = !string.IsNullOrEmpty(formId) && Guid.TryParse(formId, out Guid parsedFormId) ? parsedFormId : null,
-                    FormUserId = userId,  // ✅ UserId (Foreign Key)
-                    FormUserNameSurname = formUserNameSurname,  // Snapshot
+                    FormUserId = userId,
+                    FormUserNameSurname = formUserNameSurname,
                     FormDescription = formDescription,
-                    FormTaskMessage = formTaskMessage, // FormTaskNode oluşturulurken kaydedilen mesaj
-                    FormItemStatus = FormItemStatus.Pending
+                    FormTaskMessage = formTaskMessage,
+                    // ✅ SADE VE TEMİZ: START'ta HER ZAMAN Pending!
+                    FormItemStatus = FormItemStatus.Pending,
+                    FormData = null  // START'ta FormData yok, Continue'da doldurulacak
                 };
                 
                 workFlowItem.formItems.Add(formItem);
             }
             
+            // WorkflowItem status: Pending
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Pending;
-            return ""; // Form doldurulana kadar durdur
+            
+            // Workflow'u DURDUR (kullanıcı formu dolduracak)
+            return "";
         }
         
-        // Parameter varsa (form doldurulduysa), completed yap ve devam et
+        // DURUM 2: CONTINUE - Workflow Devam Et
         if (!string.IsNullOrEmpty(parameter))
         {
-            // WorkflowItem'ı Completed yap (workflow devam edecek)
-            // FormItem'ların Completed yapılması WorkFlowExecute.cs'de yapılacak
-            // Çünkü orada hangi kullanıcının doldurduğu bilgisi var (dto.UserName)
+            // ✅ SADE VE TEMİZ: Sadece WorkflowItem'ı Completed yap
+            // FormItem güncellemesi NodeCompletionHandler'da yapılacak!
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+            
+            // Sonraki node'a geç
+            return FindLinkForPort(currentNode.Id, parameter);
         }
         
-        // Düğüme bağlı çıkış bağlantılarını bulun
-        var nextNode = FindLinkForPort(currentNode.Id, parameter);
-        return nextNode;
+        // Buraya gelmemeli (yukarıdaki if'ler return yapıyor)
+        return "";
     }
 
     private string ExecuteAlertNode(WorkflowNode currentNode, WorkflowItem workFlowItem, string parameter)

@@ -1,4 +1,4 @@
-﻿using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -17,7 +17,12 @@ namespace formneo.repository.Repositories
 
         public async Task<WorkflowHead> GetWorkFlowWitId(Guid id)
         {
-            var workflowHead = await _context.WorkflowHead.Include(e => e.workflowItems).FirstOrDefaultAsync(x => x.Id == id);
+            var workflowHead = await _context.WorkflowHead
+                .Include(e => e.workflowItems)
+                    .ThenInclude(wi => wi.formItems)  // ✅ FormItems'ları da yükle!
+                .Include(e => e.workflowItems)
+                    .ThenInclude(wi => wi.approveItems)  // ✅ ApproveItems'ları da yükle!
+                .FirstOrDefaultAsync(x => x.Id == id);
             return workflowHead;
         }
     }
