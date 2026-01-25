@@ -91,6 +91,36 @@ namespace formneo.core.DTOs
         /// Süreci başlatan kişinin pozisyon bilgisi
         /// </summary>
         public string BaslatanPozisyon { get; set; }
+        
+        /// <summary>
+        /// Süreç adı
+        /// </summary>
+        public string SurecAdi { get; set; }
+        
+        /// <summary>
+        /// Form adı
+        /// </summary>
+        public string FormAdi { get; set; }
+        
+        /// <summary>
+        /// Mevcut adım (pending olan item'ın node name'i)
+        /// </summary>
+        public string MevcutAdim { get; set; }
+        
+        /// <summary>
+        /// Geçen süre (gün cinsinden)
+        /// </summary>
+        public int Sure { get; set; }
+        
+        /// <summary>
+        /// Geçen süre (detaylı format: "3 gün önce")
+        /// </summary>
+        public string SureDetayli { get; set; }
+        
+        /// <summary>
+        /// Durum (Türkçe string: "Devam Ediyor", "Tamamlandı" vb.)
+        /// </summary>
+        public string Durum { get; set; }
     }
 
     /// <summary>
@@ -137,6 +167,36 @@ namespace formneo.core.DTOs
         /// Süreci başlatan kişinin pozisyon bilgisi
         /// </summary>
         public string BaslatanPozisyon { get; set; }
+        
+        /// <summary>
+        /// Süreç adı
+        /// </summary>
+        public string SurecAdi { get; set; }
+        
+        /// <summary>
+        /// Form adı
+        /// </summary>
+        public string FormAdi { get; set; }
+        
+        /// <summary>
+        /// Mevcut adım (pending olan item'ın node name'i)
+        /// </summary>
+        public string MevcutAdim { get; set; }
+        
+        /// <summary>
+        /// Geçen süre (gün cinsinden)
+        /// </summary>
+        public int Sure { get; set; }
+        
+        /// <summary>
+        /// Geçen süre (detaylı format: "3 gün önce")
+        /// </summary>
+        public string SureDetayli { get; set; }
+        
+        /// <summary>
+        /// Durum (Türkçe string: "Devam Ediyor", "Tamamlandı" vb.)
+        /// </summary>
+        public string Durum { get; set; }
     }
 
     /// <summary>

@@ -24,7 +24,7 @@ namespace formneo.api.Controllers
 {
     [Route("api/[controller]/[action]")]
     [ApiController]
-    [Authorize(AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme)]
+     [Authorize(AuthenticationSchemes = JwtBearerDefaults.AuthenticationScheme)]
     public class WorkFlowController : CustomBaseController
     {
         private readonly IMapper _mapper;
@@ -300,16 +300,19 @@ namespace formneo.api.Controllers
         // }
 
         /// <summary>
-        /// Kullanıcının pending task'larını getirir (FormTask ve UserTask)
+        /// Kullanıcının pending task'larını getirir (FormTask ve UserTask) - filtreleme desteği ile
         /// </summary>
         [HttpGet("my-tasks")]
-        public async Task<ActionResult<MyTasksDto>> GetMyTasks()
+        public async Task<ActionResult<MyTasksDto>> GetMyTasks([FromQuery] WorkflowFilterDto? filter)
         {
             var userName = User.Identity.Name;
             if (string.IsNullOrEmpty(userName))
             {
                 return Unauthorized();
             }
+            
+            // Filter null ise default değerler kullan
+            filter ??= new WorkflowFilterDto();
 
             // UserName'i UserId'ye çevir
             var currentUser = await _userManager.FindByNameAsync(userName);
@@ -427,6 +430,24 @@ namespace formneo.api.Controllers
                     }
                 }
 
+                // Form adını al
+                string formAdi = "";
+                if (formItem.FormId.HasValue)
+                {
+                    try
+                    {
+                        var form = await _formService.GetByIdStringGuidAsync(formItem.FormId.Value);
+                        if (form != null)
+                        {
+                            formAdi = form.FormName ?? "";
+                        }
+                    }
+                    catch
+                    {
+                        // Form bulunamazsa devam et
+                    }
+                }
+
                 var formTaskDto = new FormTaskItemDto
                 {
                     Id = formItem.Id,
@@ -445,122 +466,56 @@ namespace formneo.api.Controllers
                     UniqNumber = formItem.WorkFlowHead?.UniqNumber ?? 0,  // WorkflowHead'in UniqNumber'ı (ana süreç numarası)
                     BaslatanAdSoyad = baslatanAdSoyad,
                     BaslatanDepartman = baslatanDepartman,
-                    BaslatanPozisyon = baslatanPozisyon
+                    BaslatanPozisyon = baslatanPozisyon,
+                    // Yeni alanlar (GetMyStartedForms ile uyumlu)
+                    SurecAdi = formItem.WorkFlowHead?.WorkflowName ?? "Bilinmiyor",
+                    FormAdi = formAdi,
+                    MevcutAdim = formItem.workFlowItem?.NodeName ?? "Form Doldurma",
+                    Sure = CalculateDuration(formItem.CreatedDate),
+                    SureDetayli = FormatDuration(formItem.CreatedDate),
+                    Durum = GetStatusText(formItem.WorkFlowHead?.workFlowStatus)
                 };
                 myTasks.FormTasks.Add(formTaskDto);
             }
 
-            // UserTask'ları getir (ApproverNode için - ApproveItems)
-            var approveItems = await _approveItemsService.GetAllRelationTable();
-            var pendingApproveItems = approveItems
-                .Where(e => e.ApproverStatus == ApproverStatus.Pending 
-                    && e.ApproveUserId == userId  // ✅ UserId ile karşılaştır
-                    && e.WorkFlowHead != null
-                    && e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress)
-                .OrderByDescending(e => e.CreatedDate)
-                .ToList();
+            // ApproveItems kullanılmıyor - UserTasks boş kalacak
 
-            // UserTask DTO'larına map et
-            foreach (var approveItem in pendingApproveItems)
+            // MVP Filtreler - Sadece 3 basit filtre
+            
+            // 1. Süreç Tipi Filtresi
+            if (filter.WorkFlowDefinationId.HasValue)
             {
-                // WorkflowHeadId'yi workFlowItem'dan al
-                Guid workflowHeadId = Guid.Empty;
-                if (approveItem.workFlowItem != null && approveItem.workFlowItem.WorkflowHead != null && !string.IsNullOrEmpty(approveItem.workFlowItem.WorkflowHead.id))
-                {
-                    workflowHeadId = new Guid(approveItem.workFlowItem.WorkflowHead.id);
-                }
-                
-                // Başlatan bilgilerini al
-                string baslatanAdSoyad = "";
-                string baslatanDepartman = "";
-                string baslatanPozisyon = "";
-                
-                if (approveItem.WorkFlowHead != null && !string.IsNullOrEmpty(approveItem.WorkFlowHead.CreateUser))
-                {
-                    var createUserEmail = approveItem.WorkFlowHead.CreateUser;
-                    
-                    // Cache'de var mı kontrol et
-                    if (!starterUsersCache.ContainsKey(createUserEmail))
-                    {
-                        var starterUser = await _userManager.FindByNameAsync(createUserEmail);
-                        if (starterUser != null)
-                        {
-                            baslatanAdSoyad = $"{starterUser.FirstName} {starterUser.LastName}".Trim();
-                            
-                            // EmployeeAssignment'tan departman ve pozisyon al
-                            var starterAssignment = employeeAssignmentsQuery
-                                .Where(ea => ea.UserId == starterUser.Id 
-                                    && (ea.EndDate == null || ea.EndDate > DateTime.UtcNow)
-                                    && ea.AssignmentType == AssignmentType.Primary)
-                                .Include(ea => ea.OrgUnit)
-                                .Include(ea => ea.Position)
-                                .OrderByDescending(ea => ea.StartDate)
-                                .FirstOrDefault();
-                            
-                            baslatanDepartman = starterAssignment?.OrgUnit?.Name ?? "";
-                            baslatanPozisyon = starterAssignment?.Position?.Name ?? "";
-                            
-                            // Cache'e ekle
-                            starterUsersCache[createUserEmail] = (baslatanAdSoyad, baslatanDepartman, baslatanPozisyon);
-                        }
-                    }
-                    else
-                    {
-                        // Cache'den al
-                        var cached = starterUsersCache[createUserEmail];
-                        baslatanAdSoyad = cached.adSoyad;
-                        baslatanDepartman = cached.departman;
-                        baslatanPozisyon = cached.pozisyon;
-                    }
-                }
-                
-                // WorkFlowHead'i kopyala ve circular reference'ı kır
-                var userWorkFlowHeadDto = approveItem.WorkFlowHead != null ? new WorkFlowHeadDto
-                {
-                    WorkflowName = approveItem.WorkFlowHead.WorkflowName,
-                    CurrentNodeId = approveItem.WorkFlowHead.CurrentNodeId,
-                    CurrentNodeName = approveItem.WorkFlowHead.CurrentNodeName,
-                    workFlowStatus = approveItem.WorkFlowHead.workFlowStatus,
-                    CreateUser = approveItem.WorkFlowHead.CreateUser,
-                    WorkFlowDefinationId = approveItem.WorkFlowHead.WorkFlowDefinationId,
-                    WorkFlowInfo = approveItem.WorkFlowHead.WorkFlowInfo,
-                    UniqNumber = approveItem.WorkFlowHead.UniqNumber,
-                    workflowItems = null // Circular reference'ı kır
-                } : null;
-
-                // WorkFlowItem'ı kopyala ve circular reference'ı kır
-                WorkFlowItemDto userWorkFlowItemDto = null;
-                if (approveItem.workFlowItem != null)
-                {
-                    userWorkFlowItemDto = _mapper.Map<WorkFlowItemDto>(approveItem.workFlowItem);
-                    if (userWorkFlowItemDto != null)
-                    {
-                        userWorkFlowItemDto.WorkflowHead = null; // Circular reference'ı kır
-                    }
-                }
-
-                var userTaskDto = new UserTaskItemDto
-                {
-                    Id = approveItem.Id,
-                    WorkflowItemId = approveItem.WorkflowItemId,
-                    WorkflowHeadId = workflowHeadId,
-                    ShortId = approveItem.ShortId,
-                    ShortWorkflowItemId = approveItem.ShortWorkflowItemId,
-                    ApproveUser = approveItem.ApproveUser,  // ✅ DTO zaten AutoMapper'dan geldi, email içeriyor
-                    ApproveUserNameSurname = approveItem.ApproveUserNameSurname,
-                    ApproverStatus = approveItem.ApproverStatus,
-                    WorkFlowHead = userWorkFlowHeadDto,
-                    WorkFlowItem = userWorkFlowItemDto,
-                    CreatedDate = approveItem.CreatedDate,
-                    UniqNumber = approveItem.WorkFlowHead?.UniqNumber ?? 0,  // WorkflowHead'in UniqNumber'ı (ana süreç numarası)
-                    BaslatanAdSoyad = baslatanAdSoyad,
-                    BaslatanDepartman = baslatanDepartman,
-                    BaslatanPozisyon = baslatanPozisyon
-                };
-                myTasks.UserTasks.Add(userTaskDto);
+                myTasks.FormTasks = myTasks.FormTasks
+                    .Where(t => t.WorkFlowHead != null && t.WorkFlowHead.WorkFlowDefinationId == filter.WorkFlowDefinationId.Value)
+                    .ToList();
             }
-
-            myTasks.TotalCount = myTasks.FormTasks.Count + myTasks.UserTasks.Count;
+            
+            // 2. Durum Filtresi
+            if (filter.Durum.HasValue && filter.Durum.Value >= 0)
+            {
+                myTasks.FormTasks = myTasks.FormTasks
+                    .Where(t => t.WorkFlowHead != null && (int)(t.WorkFlowHead.workFlowStatus ?? 0) == filter.Durum.Value)
+                    .ToList();
+            }
+            
+            // 3. Tarih Aralığı Filtreleri
+            if (filter.BaslangicTarihiMin.HasValue)
+            {
+                myTasks.FormTasks = myTasks.FormTasks
+                    .Where(t => t.CreatedDate >= filter.BaslangicTarihiMin.Value)
+                    .ToList();
+            }
+            
+            if (filter.BaslangicTarihiMax.HasValue)
+            {
+                myTasks.FormTasks = myTasks.FormTasks
+                    .Where(t => t.CreatedDate <= filter.BaslangicTarihiMax.Value)
+                    .ToList();
+            }
+            
+            // Tarihe göre sırala (en yeniler üstte)
+            myTasks.FormTasks = myTasks.FormTasks.OrderByDescending(t => t.CreatedDate).ToList();
+            myTasks.TotalCount = myTasks.FormTasks.Count;
 
             return Ok(myTasks);
         }
@@ -867,25 +822,60 @@ namespace formneo.api.Controllers
         }
 
         /// <summary>
-        /// Kullanıcının başlattığı tüm formları listeler
+        /// Kullanıcının başlattığı tüm formları listeler (filtreleme desteği ile)
         /// </summary>
         [HttpGet]
-        public async Task<ActionResult<MyStartedFormsResultDto>> GetMyStartedForms()
+        public async Task<ActionResult<MyStartedFormsResultDto>> GetMyStartedForms([FromQuery] WorkflowFilterDto? filter)
         {
             var userName = User.Identity.Name;
             if (string.IsNullOrEmpty(userName))
             {
                 return Unauthorized("Kullanıcı bulunamadı");
             }
+            
+            // Filter null ise default değerler kullan
+            filter ??= new WorkflowFilterDto();
 
-            // Kullanıcının başlattığı tüm workflow'ları getir
+            // Kullanıcının başlattığı workflow'ları getir - DATABASE SEVİYESİNDE FİLTRELEME
             var workflowHeadsQuery = await _workFlowHeadService.Include();
-            var myStartedWorkflows = await workflowHeadsQuery
-                .Where(w => w.CreateUser == userName && !w.IsDelete)
+            
+            // Temel filtre: Kullanıcının başlattığı, silinmemiş kayıtlar
+            var query = workflowHeadsQuery
+                .Where(w => w.CreateUser == userName && !w.IsDelete);
+            
+            // MVP Filtreler - Sadece 3 tane
+            
+            // 1. Süreç Tipi Filtresi
+            if (filter.WorkFlowDefinationId.HasValue)
+            {
+                query = query.Where(w => w.WorkFlowDefinationId == filter.WorkFlowDefinationId.Value);
+            }
+            
+            // 2. Durum Filtresi
+            if (filter.Durum.HasValue && filter.Durum.Value >= 0)
+            {
+                query = query.Where(w => (int?)w.workFlowStatus == filter.Durum.Value);
+            }
+            
+            // 3. Tarih Aralığı Filtreleri
+            if (filter.BaslangicTarihiMin.HasValue)
+            {
+                query = query.Where(w => w.CreatedDate >= filter.BaslangicTarihiMin.Value);
+            }
+            
+            if (filter.BaslangicTarihiMax.HasValue)
+            {
+                query = query.Where(w => w.CreatedDate <= filter.BaslangicTarihiMax.Value);
+            }
+            
+            // Include'ları ekle ve tarihe göre sırala (en yeniler üstte)
+            var myStartedWorkflows = await query
                 .Include(w => w.WorkFlowDefination)
                 .Include(w => w.Form)
                 .OrderByDescending(w => w.CreatedDate)
                 .ToListAsync();
+            
+            var totalCount = myStartedWorkflows.Count;
 
             // Başlatan kullanıcının bilgilerini al
             var currentUser = await _userManager.FindByNameAsync(userName);
@@ -1023,7 +1013,7 @@ namespace formneo.api.Controllers
 
             var responseDto = new MyStartedFormsResultDto
             {
-                TotalCount = result.Count,
+                TotalCount = totalCount,
                 Data = result
             };
 
