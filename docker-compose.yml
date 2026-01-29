@@ -48,7 +48,7 @@ services:
       retries: 3
 
   backend:
-    image: ghcr.io/muratmerdogan/formneo.server-backend:${TAG:-latest}
+    image: ghcr.io/formneo/formneo.server-backend:${TAG:-latest}
     container_name: formneo-backend
     env_file: .env
     environment:
