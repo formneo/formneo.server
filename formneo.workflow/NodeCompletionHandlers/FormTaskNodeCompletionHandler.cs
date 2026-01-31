@@ -25,14 +25,18 @@ namespace formneo.workflow.NodeCompletionHandlers
                 return NodeCompletionResult.Empty;
             }
 
-            // 1. Kullanıcının FormItem'ını bul (Pending durumda)
+            // 1. Kullanıcının FormItem'ını bul
             var userId = await ResolveUserIdAsync(context.Dto.UserName, context.Parameters);
-            var formItem = context.Node.formItems.FirstOrDefault(fi => fi.FormUserId == userId)
-                        ?? context.Node.formItems.FirstOrDefault();
+            var formItem = context.Node.formItems.FirstOrDefault(fi => fi.FormUserId == userId);
 
+            // ✅ İlgili kullanıcının FormItem'ı OLMALIDIR!
+            // Yoksa bu kullanıcı bu forma atanmamış demektir
             if (formItem == null)
             {
-                return NodeCompletionResult.Empty;
+                // Güvenlik: Bu kullanıcı bu forma yetkili değil!
+                throw new UnauthorizedAccessException(
+                    $"User {userId} is not assigned to this FormTask. " +
+                    $"Only assigned users can complete this form.");
             }
 
             // 2. ✅ FormItem'ı COMPLETED YAP (Handler'ın ana görevi!)

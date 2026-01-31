@@ -149,13 +149,18 @@ namespace formneo.workflow
             var result = await _parameters.workFlowService.AddAsync(head);
             if (result == null) return null;
 
-            // 6. Mail gönder (pending ApproveItem'lar için)
-            // NOT: FormInstance START'ta oluşturulmaz, sadece Continue'da oluşturulur
+            // 6. ✅ START ÖZEL: Eğer form verisi varsa FormInstance oluştur
+            if (!string.IsNullOrEmpty(payloadJson))
+            {
+                await ProcessFormInstanceForStartAsync(result, dto, payloadJson);
+            }
+
+            // 7. Mail gönder (pending ApproveItem'lar için)
             await SendNotificationEmailsAsync(result);
 
             return result;
         }
-
+    
         #endregion
 
         #region Helper Methods - Load & Parse
@@ -304,6 +309,56 @@ namespace formneo.workflow
 
             // Handler'a devret
             return await handler.HandleAsync(context);
+        }
+
+        /// <summary>
+        /// START ile form verisi geldiğinde FormInstance oluştur
+        /// BASIT: Direkt INSERT, handler çağırmaya gerek yok
+        /// </summary>
+        private async Task ProcessFormInstanceForStartAsync(
+            WorkflowHead head,
+            WorkFlowDto dto,
+            string payloadJson)
+        {
+            // 1. FormTaskNode bul
+            var formTask = head.workflowItems.FirstOrDefault(wi => 
+                wi.NodeType == "formTaskNode" &&
+                wi.formItems != null && 
+                wi.formItems.Any());
+            
+            if (formTask == null) return;
+            
+            // 2. İlk FormItem'ı al
+            var formItem = formTask.formItems.First();
+            
+            // 3. FormDesign yükle (gerekirse)
+            if (string.IsNullOrEmpty(formItem.FormDesign) && formItem.FormId.HasValue)
+                    {
+                        try
+                        {
+                    var form = await _parameters._formService.GetByIdStringGuidAsync(formItem.FormId.Value);
+                            if (form != null && !string.IsNullOrEmpty(form.FormDesign))
+                    {
+                        formItem.FormDesign = form.FormDesign;
+                    }
+                }
+                catch { }
+            }
+            
+            // 4. ✅ Direkt FormInstance oluştur (BASIT!)
+            var utils = new Utils();
+            var formInstance = new FormInstance
+            {
+                WorkflowHeadId = head.Id,
+                FormId = formItem.FormId,
+                FormDesign = formItem.FormDesign,
+                FormData = payloadJson,
+                UpdatedBy = dto.UserName,
+                UpdatedByNameSurname = utils.GetNameAndSurnameAsync(dto.UserName).ToString()
+            };
+            
+            // 5. ✅ Direkt INSERT
+            await _parameters._formInstanceService.AddAsync(formInstance);
         }
 
         #endregion

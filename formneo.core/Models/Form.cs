@@ -48,5 +48,15 @@ namespace formneo.core.Models
         [EnumDataType(typeof(FormPublicationStatus))]
         public FormPublicationStatus PublicationStatus { get; set; }
 
+        /// <summary>
+        /// Form ile ilişkili entity ilişkileri (Entity Manager)
+        /// </summary>
+        public virtual ICollection<EntityManager.FormEntityRelation> EntityRelations { get; set; }
+
+        /// <summary>
+        /// Form ile ilişkili field mapping'ler (Entity Manager)
+        /// </summary>
+        public virtual ICollection<EntityManager.FormFieldMapping> FieldMappings { get; set; }
+
     }
 }

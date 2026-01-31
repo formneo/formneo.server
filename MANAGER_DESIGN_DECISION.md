@@ -210,3 +210,6 @@ Ama şu anki basit yapı için **OrgUnit.ManagerId yeterli ve daha mantıklı!**
 
 
 
+
+
+

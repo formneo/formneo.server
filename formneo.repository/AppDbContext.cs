@@ -26,6 +26,7 @@ using formneo.core.Models.CRM;
 using formneo.core.Models.Lookup;
 using formneo.core.Services;
 using formneo.core.Models.Security;
+using formneo.core.Models.EntityManager;
 
 
 namespace formneo.repository
@@ -124,6 +125,13 @@ namespace formneo.repository
         public DbSet<TenantLookupCategory> TenantLookupCategories { get; set; }
         public DbSet<TenantLookupItem> TenantLookupItems { get; set; }
         public DbSet<TenantLookupModule> TenantLookupModules { get; set; }
+
+        // Entity Manager
+        public DbSet<FormEntity> FormEntities { get; set; }
+        public DbSet<FormEntityField> FormEntityFields { get; set; }
+        public DbSet<FormEntityFieldType> FormEntityFieldTypes { get; set; }
+        public DbSet<FormEntityRelation> FormEntityRelations { get; set; }
+        public DbSet<FormFieldMapping> FormFieldMappings { get; set; }
 
         //public DbSet<Employee> Employees { get; set; }
         //public DbSet<EmpSalary> EmpSalary { get; set; }
@@ -332,6 +340,8 @@ namespace formneo.repository
             modelBuilder.Entity<CrmChangeLog>().HasQueryFilter(e => !e.IsDelete);
             modelBuilder.Entity<formneo.core.Models.Onboarding.OnboardingActivation>().HasQueryFilter(e => !e.IsDelete);
 
+            // Entity Manager Configurations
+            ConfigureEntityManagerRelationships(modelBuilder);
 
             base.OnModelCreating(modelBuilder);
 
@@ -390,6 +400,100 @@ namespace formneo.repository
                     .Property("MainClientId")
                     .IsConcurrencyToken();
             }
+        }
+
+        // Entity Manager relationship configurations
+        private void ConfigureEntityManagerRelationships(ModelBuilder modelBuilder)
+        {
+            // FormEntity self-referencing relationship (Parent-Child)
+            modelBuilder.Entity<FormEntity>()
+                .HasOne(e => e.ParentEntity)
+                .WithMany(e => e.ChildEntities)
+                .HasForeignKey(e => e.ParentEntityId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormEntityField -> FormEntity
+            modelBuilder.Entity<FormEntityField>()
+                .HasOne(f => f.FormEntity)
+                .WithMany(e => e.Fields)
+                .HasForeignKey(f => f.FormEntityId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormEntityField -> FormEntityFieldType
+            modelBuilder.Entity<FormEntityField>()
+                .HasOne(f => f.FieldType)
+                .WithMany(t => t.Fields)
+                .HasForeignKey(f => f.FieldTypeId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormEntityField -> RelatedEntity (for Lookup fields)
+            modelBuilder.Entity<FormEntityField>()
+                .HasOne(f => f.RelatedEntity)
+                .WithMany()
+                .HasForeignKey(f => f.RelatedEntityId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormEntityRelation -> Form
+            modelBuilder.Entity<FormEntityRelation>()
+                .HasOne(r => r.Form)
+                .WithMany()
+                .HasForeignKey(r => r.FormId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormEntityRelation -> FormEntity
+            modelBuilder.Entity<FormEntityRelation>()
+                .HasOne(r => r.FormEntity)
+                .WithMany(e => e.FormEntityRelations)
+                .HasForeignKey(r => r.FormEntityId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormEntityRelation self-referencing (for nested relations)
+            modelBuilder.Entity<FormEntityRelation>()
+                .HasOne(r => r.ParentRelation)
+                .WithMany()
+                .HasForeignKey(r => r.ParentRelationId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormFieldMapping -> Form
+            modelBuilder.Entity<FormFieldMapping>()
+                .HasOne(m => m.Form)
+                .WithMany()
+                .HasForeignKey(m => m.FormId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormFieldMapping -> FormEntityField
+            modelBuilder.Entity<FormFieldMapping>()
+                .HasOne(m => m.FormEntityField)
+                .WithMany(f => f.FormFieldMappings)
+                .HasForeignKey(m => m.FormEntityFieldId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // FormFieldMapping -> FormEntityRelation
+            modelBuilder.Entity<FormFieldMapping>()
+                .HasOne(m => m.FormEntityRelation)
+                .WithMany()
+                .HasForeignKey(m => m.FormEntityRelationId)
+                .OnDelete(DeleteBehavior.Restrict);
+
+            // Indexes for performance
+            modelBuilder.Entity<FormEntity>()
+                .HasIndex(e => e.EntityName);
+
+            modelBuilder.Entity<FormEntityField>()
+                .HasIndex(f => new { f.FormEntityId, f.FieldName });
+
+            modelBuilder.Entity<FormEntityFieldType>()
+                .HasIndex(t => t.TypeName)
+                .IsUnique();
+
+            modelBuilder.Entity<FormEntityRelation>()
+                .HasIndex(r => new { r.FormId, r.FormEntityId });
+
+            modelBuilder.Entity<FormFieldMapping>()
+                .HasIndex(m => new { m.FormId, m.FormFieldName });
+
+            modelBuilder.Entity<FormFieldMapping>()
+                .HasIndex(m => m.FormElementId);
         }
 
         // Tenant-aware query filter backing field (reads from ITenantContext)

@@ -550,12 +550,8 @@ public class Workflow
             /// 
             _workFlowHead.workFlowStatus = WorkflowStatus.Completed;
 
-            var result = _parameters._ticketService.Where(e => e.WorkflowHeadId == _HeadId).FirstOrDefault();
-
-            result!.Status = formneo.core.Models.Ticket.TicketStatus.Open;
-
-            _parameters._ticketService.UpdateTicket(result);
-
+  
+       
             //if (_workFlowHead.WorkFlowDefinationId == new Guid("521d0cf8-c5a4-42ff-a031-aa61ab319e4a"))
             //{
             //    var positionRunner = new PositionCreateRunner();
@@ -570,11 +566,7 @@ public class Workflow
         else
         {
 
-            var result = _parameters._ticketService.Where(e => e.WorkflowHeadId == _HeadId).FirstOrDefault();
-
-            result!.Status = formneo.core.Models.Ticket.TicketStatus.Draft;
-
-            _parameters._ticketService.UpdateTicket(result);
+    
         }
 
         return "";
@@ -1086,15 +1078,16 @@ public class Workflow
                 formName = ""
             };
             
-            // Script context'ini oluştur
-            var scriptContext = new
+            // JavaScript engine oluştur ve güvenlik ayarları
+            var engine = new Engine(options => 
             {
-                workflow = workflowInfo,
-                previousNodes = previousNodes
-            };
-            
-            // JavaScript engine oluştur
-            var engine = new Engine();
+                // Timeout ekle (sonsuz döngü koruması)
+                options.TimeoutInterval(TimeSpan.FromSeconds(30));
+                // Memory limiti (DoS koruması)
+                options.LimitMemory(4_000_000); // 4MB
+                // Recursion limiti
+                options.LimitRecursion(100);
+            });
             
             // Context'i JavaScript'e aktar
             // Jint, Dictionary<string, object> tipini otomatik olarak JavaScript object'e çevirir
@@ -1111,6 +1104,38 @@ public class Workflow
                 ["formName"] = workflowInfo.formName
             };
             engine.SetValue("workflow", workflowDict);
+            
+            // formdata değişkenini ekle (script içinde formdata.fieldName şeklinde erişim için)
+            // BEST PRACTICE: ScriptNode'dan hemen önceki formNode'un verisini al
+            // Eğer previousNodes varsa, son eklenen (en güncel) form verisini kullan
+            if (previousNodes.Count > 0)
+            {
+                // Son formNode verisini al (en güncel form verisi)
+                var lastFormData = previousNodes.Values.Last();
+                engine.SetValue("formData", lastFormData);
+                engine.SetValue("formdata", lastFormData);
+            }
+            else
+            {
+                // Eğer previousNodes boşsa, payload'dan al (ilk workflow çalıştırması)
+                var payloadFormData = new Dictionary<string, object>();
+                if (!string.IsNullOrEmpty(_payloadJson))
+                {
+                    try
+                    {
+                        var payload = JObject.Parse(_payloadJson);
+                        foreach (var prop in payload.Properties())
+                        {
+                            payloadFormData[prop.Name] = prop.Value.ToObject<object>();
+                        }
+                    }
+                    catch
+                    {
+                        // Parse hatası durumunda boş object
+                    }
+                }
+                engine.SetValue("formdata", payloadFormData);
+            }
             
             // Script'i çalıştır
             var scriptResult = engine.Evaluate(currentNode.Data.script);
@@ -1175,15 +1200,38 @@ public class Workflow
         }
         catch (Exception ex)
         {
-            // Script hatası durumunda, scriptNode'u completed olarak işaretle ve sonraki node'a geç
+            // BEST PRACTICE: Exception'ı logla (debugging için kritik)
+            Console.WriteLine($"[ScriptNode Error] NodeId: {currentNode.Id}, Error: {ex.Message}");
+            Console.WriteLine($"[ScriptNode Error] Script: {currentNode.Data?.script}");
+            Console.WriteLine($"[ScriptNode Error] StackTrace: {ex.StackTrace}");
+            
+            // Script hatası durumunda, scriptNode'u Completed olarak işaretle (hata detayı NodeDescription'da)
             workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+            workFlowItem.NodeDescription = $"Script execution error: {ex.Message}";
             _workFlowItems.Add(workFlowItem);
             
+            // BEST PRACTICE: Hata durumunda "error" port'una git (varsa)
+            var errorNode = FindLinkForPort(currentNode.Id, "error");
+            if (!string.IsNullOrEmpty(errorNode))
+            {
+                return errorNode;
+            }
+            
+            // Error port yoksa, "no" port'una git
+            var noNode = FindLinkForPort(currentNode.Id, "no");
+            if (!string.IsNullOrEmpty(noNode))
+            {
+                return noNode;
+            }
+            
+            // Hiçbir port bulunamazsa, ilk edge'i kullan (backward compatibility)
             List<Edges> outgoingLinks = Edges.FindAll(link => link.Source == currentNode.Id);
             if (outgoingLinks.Count > 0)
             {
                 return outgoingLinks[0].Target;
             }
+            
+            // Hiçbir edge yoksa workflow durur
             return null;
         }
     }
