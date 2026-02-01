@@ -2,7 +2,7 @@ name: PROD Backend — Build & Deploy
 
 on:
   push:
-    branches: ["main"]         # Sadece PROD (main) için
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
@@ -10,37 +10,38 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write          # GHCR'ye push için gerekli
+      packages: write
+
     steps:
       - uses: actions/checkout@v4
 
       - name: Login to GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u formneo --password-stdin
 
       - name: Set vars
         id: v
         run: |
-          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY}-backend" >> $GITHUB_OUTPUT
+          echo "IMAGE=ghcr.io/formneo/backend" >> $GITHUB_OUTPUT
           echo "TAG=prod-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
 
       - name: Build backend image
         run: |
           docker build \
-            -t ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }} \
-            -t ${{ steps.v.outputs.IMAGE }}:latest \
+            -t ghcr.io/formneo/backend:${{ steps.v.outputs.TAG }} \
+            -t ghcr.io/formneo/backend:latest \
             -f formneo.api/Dockerfile .
 
       - name: Push backend image
         run: |
-          docker push ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }}
-          docker push ${{ steps.v.outputs.IMAGE }}:latest
+          docker push ghcr.io/formneo/backend:${{ steps.v.outputs.TAG }}
+          docker push ghcr.io/formneo/backend:latest
 
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
+
     steps:
-      - name: Deploy to VPS (pull & up)
+      - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -49,12 +50,8 @@ jobs:
           script: |
             set -e
             cd /opt/apps/formneoserver
-            # GHCR login
-            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
-            # Compose içindeki ${TAG} için; belirli sürümü çekelim
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u formneo --password-stdin
             export TAG=prod-${GITHUB_SHA::7}
-            # Sadece backend'i çekip güncelle (diğer servisler etkilenmesin)
-            docker compose pull backend || docker compose pull backend
-            docker compose up -d backend || docker compose up -d backend
-            # Eski dangling image'ları temizle
+            docker compose pull backend
+            docker compose up -d backend
             docker image prune -f
