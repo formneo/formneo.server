@@ -1,8 +1,7 @@
 name: PROD Backend — Build & Deploy
-
 on:
   push:
-    branches: ["main"]         # Sadece PROD (main) için
+    branches: ["main"]
   workflow_dispatch:
 
 jobs:
@@ -10,27 +9,23 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write          # GHCR'ye push için gerekli
+      packages: write
     steps:
       - uses: actions/checkout@v4
-
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-
       - name: Set vars
         id: v
         run: |
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY}-backend" >> $GITHUB_OUTPUT
           echo "TAG=prod-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
           echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-
       - name: Build backend image
         run: |
           docker build \
             -t ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }} \
             -t ${{ steps.v.outputs.IMAGE }}:latest \
             -f formneo.api/Dockerfile .
-
       - name: Push backend image
         run: |
           docker push ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }}
@@ -49,12 +44,22 @@ jobs:
           script: |
             set -e
             cd /opt/apps/formneoserver
+            
+            # Docker-compose.yml dosyasındaki eski kullanıcı adını güncelle
+            sed -i 's|ghcr.io/muratmerdogan/|ghcr.io/formneo/|g' docker-compose.yml
+            
             # GHCR login
-            docker login ghcr.io -u ${{ github.actor }} -p ${{ secrets.GITHUB_TOKEN }}
-            # Compose içindeki ${TAG} için; belirli sürümü çekelim
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            
+            # TAG'i ayarla
             export TAG=prod-${GITHUB_SHA::7}
-            # Sadece backend'i çekip güncelle (diğer servisler etkilenmesin)
-            docker compose pull backend || docker compose pull backend
-            docker compose up -d backend || docker compose up -d backend
-            # Eski dangling image'ları temizle
+            
+            # Backend'i çek ve güncelle
+            docker compose pull backend
+            docker compose up -d backend
+            
+            # Logout
+            docker logout ghcr.io
+            
+            # Temizlik
             docker image prune -f
