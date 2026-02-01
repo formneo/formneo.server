@@ -277,6 +277,11 @@ namespace formneo.core.DTOs
         /// </summary>
         public string? FieldScript { get; set; }
 
+        /// <summary>
+        /// Node'un script'i (scriptNode için - workflow definition'dan alınan script)
+        /// </summary>
+        public string? NodeScript { get; set; }
+
         // ========== UserTask (approverNode) için bilgiler ==========
         
         /// <summary>

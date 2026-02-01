@@ -516,6 +516,7 @@ namespace formneo.api.Controllers
             var workflowItem = workflowItemQuery
                 .Where(e => e.Id == workflowItemId)
                 .Include(e => e.WorkflowHead)
+                    .ThenInclude(wh => wh.WorkFlowDefination)  // WorkflowDefinition'ı da include et
                 .Include(e => e.formItems).ThenInclude(f => f.FormUser)  // ✅ Navigation property
                 .Include(e => e.approveItems).ThenInclude(a => a.ApproveUser)  // ✅ Navigation property
                 .FirstOrDefault();
@@ -527,6 +528,30 @@ namespace formneo.api.Controllers
 
             // WorkflowHeadId'yi al
             Guid workflowHeadId = workflowItem.WorkflowHeadId;
+
+            // Node'un script'ini WorkflowDefinition'dan al
+            string nodeScript = null;
+            if (workflowItem.WorkflowHead?.WorkFlowDefination?.Defination != null)
+            {
+                try
+                {
+                    var definition = JObject.Parse(workflowItem.WorkflowHead.WorkFlowDefination.Defination);
+                    var nodes = definition["nodes"] as JArray;
+                    if (nodes != null)
+                    {
+                        var currentNode = nodes.FirstOrDefault(n => n["id"]?.ToString() == workflowItem.NodeId);
+                        if (currentNode != null)
+                        {
+                            // Script'i node.data.script'ten al
+                            nodeScript = currentNode["data"]?["fieldScript"]?.ToString();
+                        }
+                    }
+                }
+                catch
+                {
+                    // JSON parse hatası durumunda nodeScript null kalır
+                }
+            }
 
             // NodeType'a göre FormTask mı UserTask mı belirle
             bool isFormTaskNode = workflowItem.NodeType == "formTaskNode";
@@ -615,7 +640,8 @@ namespace formneo.api.Controllers
                     FormTaskMessage = formItem.FormTaskMessage,
                     FormDescription = formItem.FormDescription,
                     FormUser = formItem.FormUser?.UserName ?? formItem.FormUserId,  // ✅ Navigation property'den email al
-                    FormItemStatus = formItem.FormItemStatus
+                    FormItemStatus = formItem.FormItemStatus,
+                    NodeScript = nodeScript  // Node'un script'i (scriptNode için)
                 };
             }
             else if (isApproverNode)
@@ -707,7 +733,8 @@ namespace formneo.api.Controllers
                     ApproveUser = approveItem.ApproveUser?.UserName ?? approveItem.ApproveUserId,  // ✅ Navigation property'den
                     ApproveUserNameSurname = approveItem.ApproveUserNameSurname,
                     ApproverStatus = approveItem.ApproverStatus,
-                    WorkFlowDescription = approveItem.WorkFlowDescription
+                    WorkFlowDescription = approveItem.WorkFlowDescription,
+                    NodeScript = nodeScript  // Node'un script'i (scriptNode için)
                 };
             }
 
