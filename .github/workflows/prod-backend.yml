@@ -18,22 +18,14 @@ jobs:
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u formneo --password-stdin
 
-      - name: Set vars
-        id: v
-        run: |
-          echo "IMAGE=ghcr.io/formneo/backend" >> $GITHUB_OUTPUT
-          echo "TAG=prod-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-
       - name: Build backend image
         run: |
           docker build \
-            -t ghcr.io/formneo/backend:${{ steps.v.outputs.TAG }} \
             -t ghcr.io/formneo/backend:latest \
             -f formneo.api/Dockerfile .
 
       - name: Push backend image
         run: |
-          docker push ghcr.io/formneo/backend:${{ steps.v.outputs.TAG }}
           docker push ghcr.io/formneo/backend:latest
 
   deploy:
@@ -51,7 +43,6 @@ jobs:
             set -e
             cd /opt/apps/formneoserver
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u formneo --password-stdin
-            export TAG=prod-${GITHUB_SHA::7}
             docker compose pull backend
             docker compose up -d backend
             docker image prune -f
