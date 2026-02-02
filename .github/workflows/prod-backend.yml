@@ -1,7 +1,8 @@
 name: PROD Backend — Build & Deploy
+
 on:
   push:
-    branches: ["main"]
+    branches: ["main"]         # Sadece PROD (main) için
   workflow_dispatch:
 
 jobs:
@@ -9,77 +10,31 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
-    outputs:
-      image: ${{ steps.v.outputs.IMAGE }}
-      tag: ${{ steps.v.outputs.TAG }}
+      packages: write          # GHCR'ye push için gerekli
     steps:
       - uses: actions/checkout@v4
-      
+
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-      
+
       - name: Set vars
         id: v
         run: |
-          IMAGE="ghcr.io/formneo/formneoserver-backend"
-          TAG="prod-${GITHUB_SHA::7}"
-          
-          echo "IMAGE=${IMAGE}" >> $GITHUB_OUTPUT
-          echo "TAG=${TAG}" >> $GITHUB_OUTPUT
-          
-          echo "Will build: ${IMAGE}:${TAG}"
-      
+          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY}-backend" >> $GITHUB_OUTPUT
+          echo "TAG=prod-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+
       - name: Build backend image
         run: |
           docker build \
             -t ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }} \
             -t ${{ steps.v.outputs.IMAGE }}:latest \
             -f formneo.api/Dockerfile .
-      
+
       - name: Push backend image
         run: |
-          echo "Pushing images to GHCR..."
           docker push ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }}
           docker push ${{ steps.v.outputs.IMAGE }}:latest
-          
-          echo "✅ Images pushed successfully!"
-          echo "   ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }}"
-          echo "   ${{ steps.v.outputs.IMAGE }}:latest"
 
-  deploy:
-    needs: build-push
-    runs-on: ubuntu-latest
-    steps:
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.2.0
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          envs: IMAGE,TAG
-        env:
-          IMAGE: ${{ needs.build-push.outputs.image }}
-          TAG: ${{ needs.build-push.outputs.tag }}
-        script: |
-          set -e
-          
-          echo "Deploying ${IMAGE}:${TAG}"
-          
-          cd /opt/apps/formneoserver
-          
-          # GHCR login
-          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-          
-          # Export for docker-compose
-          export TAG="${TAG}"
-          
-          # Pull and update
-          docker pull "${IMAGE}:${TAG}"
-          docker compose up -d backend
-          
-          # Cleanup
-          docker logout ghcr.io
-          docker image prune -f
-          
-          echo "✅ Deployment completed!"
+            # Eski dangling image'ları temizle
+            docker image prune -f
