@@ -21,6 +21,8 @@ namespace formneo.core.DTOs
         public Guid? FormId { get; set; }
         
         public string? FormName { get; set; }
+        
+        public int? FormRevision { get; set; }
 
 
     }
@@ -40,7 +42,23 @@ namespace formneo.core.DTOs
         public Guid? FormId { get; set; }
         
         public string? FormName { get; set; }
+        
+        public int? FormRevision { get; set; }
 
 
+    }
+    
+    public class WorkFlowDefinationWithInitScriptDto
+    {
+        public Guid Id { get; set; }
+        public string? WorkflowName { get; set; }
+        public Boolean IsActive { get; set; }
+        public int Revision { get; set; }
+        public Guid? FormId { get; set; }
+        public string? FormName { get; set; }
+        public int? FormRevision { get; set; }
+        
+        // Tüm form node'larının initScript'lerini birleştirilmiş hali
+        public string? InitScript { get; set; }
     }
 }
