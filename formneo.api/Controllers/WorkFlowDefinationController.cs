@@ -282,6 +282,170 @@ namespace formneo.api.Controllers
             return CreateActionResult(CustomResponseDto<List<WorkFlowDefinationDto>>.Success(200, dto));
         }
 
+        /// <summary>
+        /// Workflow listesini menü yapısında döner - Performans optimize edilmiş
+        /// Tek sorguda sadece gerekli alanları çeker ve Form revizyonlarını resolve eder
+        /// </summary>
+        [HttpGet("menu-structure")]
+        public async Task<ActionResult<WorkFlowMenuResponseDto>> GetMenuStructure()
+        {
+            // 1. Tek sorguda sadece gerekli alanları çek (performans için projection kullan)
+                var workflowDefinitions = await _service.GetAllAsync();
+            
+            var activeWorkflows = workflowDefinitions
+                .Where(w => w.IsActive)
+                .ToList();
+
+            if (!activeWorkflows.Any())
+            {
+                return new WorkFlowMenuResponseDto
+                {
+                    Menus = new List<WorkFlowMenuGroupDto>
+                    {
+                        new WorkFlowMenuGroupDto
+                        {
+                            Id = "processes",
+                            Label = "Süreçler",
+                            Icon = "folder",
+                            Children = new List<WorkFlowMenuItemDto>()
+                        }
+                    }
+                };
+            }
+
+            // 2. FormId'leri topla ve tek sorguda tüm form ailelerini çek (N+1 query'den kaçın)
+            var formIds = activeWorkflows
+                .Where(w => w.FormId.HasValue)
+                .Select(w => w.FormId.Value)
+                .Distinct()
+                .ToList();
+
+            Dictionary<Guid, (Guid Id, string Name, int Revision)> latestFormsByOriginalId = new Dictionary<Guid, (Guid, string, int)>();
+
+            if (formIds.Any())
+            {
+                // FormId'lerin ait olduğu aileleri bul
+                var relatedForms = await _formRepository
+                    .Where(f => formIds.Contains(f.Id))
+                    .Select(f => new { f.Id, f.ParentFormId })
+                    .ToListAsync();
+
+                var familyRootIds = relatedForms
+                    .Select(f => f.ParentFormId ?? f.Id)
+                    .Distinct()
+                    .ToList();
+
+                // Tek sorguda tüm aile formlarını çek - sadece gerekli alanlar
+                var familyForms = await _formRepository
+                    .Where(f => familyRootIds.Contains(f.Id) || 
+                                (f.ParentFormId.HasValue && familyRootIds.Contains(f.ParentFormId.Value)))
+                    .Select(f => new { 
+                        f.Id, 
+                        f.ParentFormId, 
+                        f.FormName, 
+                        f.Revision, 
+                        f.PublicationStatus 
+                    })
+                    .ToListAsync();
+
+                // Her aile için en son revizyonu belirle (memory'de group - daha performanslı)
+                var latestByRoot = familyForms
+                    .GroupBy(f => f.ParentFormId ?? f.Id)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => {
+                            var published = g.Where(f => f.PublicationStatus == FormPublicationStatus.Published)
+                                           .OrderByDescending(f => f.Revision)
+                                           .FirstOrDefault();
+                            var selected = published ?? g.OrderByDescending(f => f.Revision).First();
+                            return (selected.Id, selected.FormName, selected.Revision);
+                        }
+                    );
+
+                // Original FormId'leri en son revizyonlara map et
+                foreach (var relatedForm in relatedForms)
+                {
+                    var rootId = relatedForm.ParentFormId ?? relatedForm.Id;
+                    if (latestByRoot.TryGetValue(rootId, out var latestForm))
+                    {
+                        latestFormsByOriginalId[relatedForm.Id] = latestForm;
+                    }
+                }
+            }
+
+            // 3. Menü yapısını oluştur (memory'de işlem - hızlı)
+            var workflowItems = activeWorkflows.Select(w =>
+            {
+                // Form bilgilerini resolve et
+                Guid? resolvedFormId = w.FormId;
+                string? resolvedFormName = w.Form?.FormName;
+                int? resolvedFormRevision = w.Form?.Revision;
+
+                if (w.FormId.HasValue && latestFormsByOriginalId.TryGetValue(w.FormId.Value, out var latestForm))
+                {
+                    resolvedFormId = latestForm.Id;
+                    resolvedFormName = latestForm.Name;
+                    resolvedFormRevision = latestForm.Revision;
+                }
+
+                // Workflow string ID'si oluştur (küçük harf, boşlukları alt çizgi ile değiştir)
+                var workflowIdString = $"wf_{w.Id.ToString().Substring(0, 8)}";
+                var itemId = w.WorkflowName?.ToLowerInvariant().Replace(" ", "_").Replace("ı", "i").Replace("ş", "s").Replace("ç", "c").Replace("ğ", "g").Replace("ü", "u").Replace("ö", "o") 
+                             ?? workflowIdString;
+
+                return new WorkFlowMenuItemDto
+                {
+                    Id = itemId,
+                    Label = w.WorkflowName ?? "İsimsiz Workflow",
+                    Icon = "workflow",
+                    WorkflowId = workflowIdString,
+                    WorkflowGuid = w.Id,
+                    Revision = w.Revision,
+                    FormId = resolvedFormId,
+                    FormName = resolvedFormName,
+                    FormRevision = resolvedFormRevision,
+                    Views = new List<WorkFlowMenuViewDto>
+                    {
+                        new WorkFlowMenuViewDto
+                        {
+                            Id = "my_requests",
+                            Label = "Benim Taleplerim",
+                            Path = $"/workflows/{workflowIdString}/my"
+                        },
+                        new WorkFlowMenuViewDto
+                        {
+                            Id = "approvals",
+                            Label = "Onay Bekleyenler",
+                            Path = $"/workflows/{workflowIdString}/approvals"
+                        },
+                        new WorkFlowMenuViewDto
+                        {
+                            Id = "all",
+                            Label = "Tüm Kayıtlar",
+                            Path = $"/workflows/{workflowIdString}/all"
+                        }
+                    }
+                };
+            }).ToList();
+
+            // 4. Response oluştur
+            var response = new WorkFlowMenuResponseDto
+            {
+                Menus = new List<WorkFlowMenuGroupDto>
+                {
+                    new WorkFlowMenuGroupDto
+                    {
+                        Id = "processes",
+                        Label = "Süreçler",
+                        Icon = "folder",
+                        Children = workflowItems
+                    }
+                }
+            };
+
+            return Ok(response);
+        }
+
     }
     public class Node
     {
