@@ -10,56 +10,76 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      image: ${{ steps.v.outputs.IMAGE }}
+      tag: ${{ steps.v.outputs.TAG }}
     steps:
       - uses: actions/checkout@v4
+      
       - name: Login to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      
       - name: Set vars
         id: v
         run: |
-          echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY}-backend" >> $GITHUB_OUTPUT
-          echo "TAG=prod-${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
-          echo "SHORT_SHA=${GITHUB_SHA::7}" >> $GITHUB_OUTPUT
+          IMAGE="ghcr.io/formneo/formneoserver-backend"
+          TAG="prod-${GITHUB_SHA::7}"
+          
+          echo "IMAGE=${IMAGE}" >> $GITHUB_OUTPUT
+          echo "TAG=${TAG}" >> $GITHUB_OUTPUT
+          
+          echo "Will build: ${IMAGE}:${TAG}"
+      
       - name: Build backend image
         run: |
           docker build \
             -t ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }} \
             -t ${{ steps.v.outputs.IMAGE }}:latest \
             -f formneo.api/Dockerfile .
+      
       - name: Push backend image
         run: |
+          echo "Pushing images to GHCR..."
           docker push ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }}
           docker push ${{ steps.v.outputs.IMAGE }}:latest
+          
+          echo "✅ Images pushed successfully!"
+          echo "   ${{ steps.v.outputs.IMAGE }}:${{ steps.v.outputs.TAG }}"
+          echo "   ${{ steps.v.outputs.IMAGE }}:latest"
 
   deploy:
     needs: build-push
     runs-on: ubuntu-latest
     steps:
-      - name: Deploy to VPS (pull & up)
+      - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          script: |
-            set -e
-            cd /opt/apps/formneoserver
-            
-            # Docker-compose.yml dosyasındaki eski kullanıcı adını güncelle
-            sed -i 's|ghcr.io/muratmerdogan/|ghcr.io/formneo/|g' docker-compose.yml
-            
-            # GHCR login
-            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # TAG'i ayarla
-            export TAG=prod-${GITHUB_SHA::7}
-            
-            # Backend'i çek ve güncelle
-            docker compose pull backend
-            docker compose up -d backend
-            
-            # Logout
-            docker logout ghcr.io
-            
-            # Temizlik
-            docker image prune -f
+          envs: IMAGE,TAG
+        env:
+          IMAGE: ${{ needs.build-push.outputs.image }}
+          TAG: ${{ needs.build-push.outputs.tag }}
+        script: |
+          set -e
+          
+          echo "Deploying ${IMAGE}:${TAG}"
+          
+          cd /opt/apps/formneoserver
+          
+          # GHCR login
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+          
+          # Export for docker-compose
+          export TAG="${TAG}"
+          
+          # Pull and update
+          docker pull "${IMAGE}:${TAG}"
+          docker compose up -d backend
+          
+          # Cleanup
+          docker logout ghcr.io
+          docker image prune -f
+          
+          echo "✅ Deployment completed!"
