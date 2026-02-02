@@ -543,7 +543,7 @@ namespace formneo.api.Controllers
                         if (currentNode != null)
                         {
                             // Script'i node.data.script'ten al
-                            nodeScript = currentNode["data"]?["fieldScript"]?.ToString();
+                            nodeScript = currentNode["data"]?["initScript"]?.ToString();
                         }
                     }
                 }
