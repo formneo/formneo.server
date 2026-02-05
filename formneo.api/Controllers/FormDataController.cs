@@ -77,7 +77,7 @@ namespace formneo.api.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<FormDataListDto>> GetById(string id)
         {
-            if (!Guid.TryParse(id, out var guid))
+                if (!Guid.TryParse(id, out var guid))
             {
                 return BadRequest("Geçersiz id formatı");
             }
