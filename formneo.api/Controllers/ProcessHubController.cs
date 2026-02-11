@@ -7,6 +7,7 @@ using formneo.core.DTOs;
 using formneo.core.DTOs.ProcessHub;
 using formneo.core.Models;
 using formneo.core.Repositories;
+using formneo.core.Services;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -24,19 +25,22 @@ namespace formneo.api.Controllers
         private readonly IWorkFlowItemRepository _workflowItemRepository;
         private readonly IApproveItemsRepository _approveItemsRepository;
         private readonly IFormItemsRepository _formItemsRepository;
+        private readonly IUserOrgInfoService _userOrgInfoService;
 
         public ProcessHubController(
             IMapper mapper,
             IWorkflowRepository workflowRepository,
             IWorkFlowItemRepository workflowItemRepository,
             IApproveItemsRepository approveItemsRepository,
-            IFormItemsRepository formItemsRepository)
+            IFormItemsRepository formItemsRepository,
+            IUserOrgInfoService userOrgInfoService)
         {
             _mapper = mapper;
             _workflowRepository = workflowRepository;
             _workflowItemRepository = workflowItemRepository;
             _approveItemsRepository = approveItemsRepository;
             _formItemsRepository = formItemsRepository;
+            _userOrgInfoService = userOrgInfoService;
         }
 
         /// <summary>
@@ -449,7 +453,18 @@ namespace formneo.api.Controllers
                 })
                 .ToListAsync();
 
-            // 4. WorkflowItemHistoryDto listesi oluştur
+            // 4. Tüm Pending FormUserId'leri topla ve UserOrgInfoService ile Ad Soyad, Departman, Pozisyon al
+            var allPendingUserIds = formItems
+                .Where(fi => fi.FormItemStatus == FormItemStatus.Pending)
+                .Select(fi => fi.FormUserId)
+                .Distinct()
+                .ToList();
+
+            var userOrgInfos = allPendingUserIds.Count > 0
+                ? await _userOrgInfoService.GetUserOrgInfosBatchAsync(allPendingUserIds)
+                : new Dictionary<string, formneo.core.DTOs.UserOrgInfoDto>();
+
+            // 5. WorkflowItemHistoryDto listesi oluştur
             var historyItems = workflowItems.Select(wi =>
             {
                 // Pending FormItems = kimde bekliyor (FormUser)
@@ -458,14 +473,18 @@ namespace formneo.api.Controllers
                     .ToList();
 
                 var pendingUsers = pendingFormItems
-                    .Select(fi => new PendingUserDto
+                    .Select(fi =>
                     {
-                        UserId = fi.FormUserId,
-                        UserName = fi.FormUserNameSurname ?? fi.FormUserId,
-                        Department = null,
-                        DepartmentId = null,
-                        Position = null,
-                        PositionId = null
+                        var orgInfo = userOrgInfos.GetValueOrDefault(fi.FormUserId);
+                        return new PendingUserDto
+                        {
+                            UserId = fi.FormUserId,
+                            UserName = orgInfo?.UserName ?? fi.FormUserNameSurname ?? fi.FormUserId,
+                            Department = orgInfo?.Department,
+                            DepartmentId = orgInfo?.DepartmentId,
+                            Position = orgInfo?.Position,
+                            PositionId = orgInfo?.PositionId
+                        };
                     })
                     .GroupBy(u => u.UserId)
                     .Select(g => g.First())
