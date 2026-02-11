@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -494,6 +494,47 @@ namespace formneo.repository
 
             modelBuilder.Entity<FormFieldMapping>()
                 .HasIndex(m => m.FormElementId);
+
+            // Performance indexes for ProcessHub workflow history
+            // Index on FormUserId for faster joins with UserApp
+            modelBuilder.Entity<FormItems>()
+                .HasIndex(f => f.FormUserId);
+
+            // Composite index for active employee assignments lookup
+            // Filters by UserId first, then AssignmentType, and checks EndDate for active assignments
+            modelBuilder.Entity<EmployeeAssignment>()
+                .HasIndex(ea => new { ea.UserId, ea.AssignmentType, ea.EndDate })
+                .HasDatabaseName("IX_EmployeeAssignment_ActiveLookup");
+
+            // Additional index for OrgUnit and Position lookups
+            modelBuilder.Entity<EmployeeAssignment>()
+                .HasIndex(ea => ea.OrgUnitId);
+
+            modelBuilder.Entity<EmployeeAssignment>()
+                .HasIndex(ea => ea.PositionId);
+
+            // Performance indexes for Menu table
+            // Index on ParentMenuId for hierarchical menu queries (self-referencing FK)
+            modelBuilder.Entity<Menu>()
+                .HasIndex(m => m.ParentMenuId)
+                .HasDatabaseName("IX_Menus_ParentMenuId");
+
+            // Composite index for most common query pattern: root menus with soft delete check and ordering
+            // Covers queries like: Where(m => m.ParentMenuId == null && m.IsDelete == false).OrderBy(m => m.Order)
+            modelBuilder.Entity<Menu>()
+                .HasIndex(m => new { m.IsDelete, m.ParentMenuId, m.Order })
+                .HasDatabaseName("IX_Menus_IsDelete_ParentMenuId_Order");
+
+            // Composite index for global admin menu filtering
+            // Covers queries like: Where(e => e.IsDelete == false && e.IsTenantOnly == false)
+            modelBuilder.Entity<Menu>()
+                .HasIndex(m => new { m.IsDelete, m.IsTenantOnly })
+                .HasDatabaseName("IX_Menus_IsDelete_IsTenantOnly");
+
+            // Index on MenuCode for lookups and uniqueness checks
+            modelBuilder.Entity<Menu>()
+                .HasIndex(m => m.MenuCode)
+                .HasDatabaseName("IX_Menus_MenuCode");
         }
 
         // Tenant-aware query filter backing field (reads from ITenantContext)

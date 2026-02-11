@@ -61,6 +61,13 @@ namespace formneo.api.Controllers
                 return Unauthorized("Kullanıcı bilgisi alınamadı");
             }
 
+            // Kullanıcı ID'sini al (Approvals için gerekli)
+            var currentUserId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(currentUserId))
+            {
+                return Unauthorized("Kullanıcı ID'si alınamadı");
+            }
+
             // Frontend'den gelen değerleri normalize et (my_requests -> My)
             var normalizedViewType = viewType.ToLower() switch
             {
@@ -98,17 +105,46 @@ namespace formneo.api.Controllers
                     break;
 
                 case ProcessViewType.Approvals:
-                    // Kullanıcının onaylaması gereken kayıtlar
-                    // ApproveItems tablosundan kullanıcının pending onaylarını bul
-                    var workflowIdsWithPendingApprovals = await _approveItemsRepository
+                    // Kullanıcının onaylaması gereken kayıtlar (USER ID ile çalışır)
+                    // 1. ApproveItems'dan WorkflowItemId'leri al
+                    var approveWorkflowItemIds = await _approveItemsRepository
                         .Where(ai => 
-                            ai.ApproveUserId == currentUser && 
+                            ai.ApproveUserId == currentUserId && 
                             ai.ApproverStatus == ApproverStatus.Pending)
-                        .Select(ai => ai.WorkflowItem.WorkflowHeadId)
+                        .Select(ai => ai.WorkflowItemId)
                         .Distinct()
                         .ToListAsync();
 
-                    query = query.Where(w => workflowIdsWithPendingApprovals.Contains(w.Id));
+                    // WorkflowItem'ları çek ve WorkflowHeadId'leri al
+                    var workflowIdsWithPendingApprovals = await _workflowItemRepository
+                        .Where(wi => approveWorkflowItemIds.Contains(wi.Id))
+                        .Select(wi => wi.WorkflowHeadId)
+                        .Distinct()
+                        .ToListAsync();
+
+                    // 2. FormItems'dan WorkflowItemId'leri al
+                    var formWorkflowItemIds = await _formItemsRepository
+                        .Where(fi => 
+                            fi.FormUserId == currentUserId && 
+                            fi.FormItemStatus == FormItemStatus.Pending)
+                        .Select(fi => fi.WorkflowItemId)
+                        .Distinct()
+                        .ToListAsync();
+
+                    // WorkflowItem'ları çek ve WorkflowHeadId'leri al
+                    var workflowIdsWithPendingForms = await _workflowItemRepository
+                        .Where(wi => formWorkflowItemIds.Contains(wi.Id))
+                        .Select(wi => wi.WorkflowHeadId)
+                        .Distinct()
+                        .ToListAsync();
+
+                    // 3. Her iki listeyi birleştir (kullanıcının ya onayı ya da formu olan tüm workflow'lar)
+                    var combinedWorkflowIds = workflowIdsWithPendingApprovals
+                        .Union(workflowIdsWithPendingForms)
+                        .Distinct()
+                        .ToList();
+
+                    query = query.Where(w => combinedWorkflowIds.Contains(w.Id));
                     break;
 
                 case ProcessViewType.All:
@@ -130,28 +166,69 @@ namespace formneo.api.Controllers
             // WorkflowHead ID'lerini topla
             var workflowHeadIds = workflowHeads.Select(w => w.Id).ToList();
 
-            // Her workflow için pending item sayılarını tek sorguda al (performans)
-            var pendingApprovals = await _approveItemsRepository
-                .Where(ai => 
-                    workflowHeadIds.Contains(ai.WorkflowItem.WorkflowHeadId) &&
-                    ai.ApproveUserId == currentUser &&
-                    ai.ApproverStatus == ApproverStatus.Pending)
-                .GroupBy(ai => ai.WorkflowItem.WorkflowHeadId)
-                .Select(g => new { WorkflowHeadId = g.Key, Count = g.Count() })
+            // Her workflow için pending item sayılarını tek sorguda al (performans) - USER ID ile
+            // İki aşamalı sorgu: WorkflowItemId → WorkflowHeadId mapping
+            
+            // 1. WorkflowHeadId'lere ait WorkflowItem'ları mapping'le
+            var workflowItemToHeadMap = await _workflowItemRepository
+                .Where(wi => workflowHeadIds.Contains(wi.WorkflowHeadId))
+                .Select(wi => new { wi.Id, wi.WorkflowHeadId })
                 .ToListAsync();
+            
+            var workflowItemToHeadDict = workflowItemToHeadMap.ToDictionary(x => x.Id, x => x.WorkflowHeadId);
+            var relevantWorkflowItemIds = workflowItemToHeadDict.Keys.ToList();
 
-            var pendingForms = await _formItemsRepository
-                .Where(fi => 
-                    workflowHeadIds.Contains(fi.WorkflowItem.WorkflowHeadId) &&
-                    fi.FormUserId == currentUser &&
-                    fi.FormItemStatus == FormItemStatus.Pending)
-                .GroupBy(fi => fi.WorkflowItem.WorkflowHeadId)
-                .Select(g => new { WorkflowHeadId = g.Key, Count = g.Count() })
+            // 2. ApproveItems'dan pending olanları al
+            var approvalItems = await _approveItemsRepository
+                .Where(ai => 
+                    ai.ApproverStatus == ApproverStatus.Pending &&
+                    ai.ApproveUserId == currentUserId &&
+                    relevantWorkflowItemIds.Contains(ai.WorkflowItemId))
+                .Select(ai => ai.WorkflowItemId)
                 .ToListAsync();
+            
+            var pendingApprovals = approvalItems
+                .Where(workflowItemId => workflowItemToHeadDict.ContainsKey(workflowItemId))
+                .GroupBy(workflowItemId => workflowItemToHeadDict[workflowItemId])
+                .Select(g => new { WorkflowHeadId = g.Key, Count = g.Count() })
+                .ToList();
+
+            // 3. FormItems'dan pending olanları al
+            var formItems = await _formItemsRepository
+                .Where(fi => 
+                    fi.FormItemStatus == FormItemStatus.Pending &&
+                    fi.FormUserId == currentUserId &&
+                    relevantWorkflowItemIds.Contains(fi.WorkflowItemId))
+                .Select(fi => fi.WorkflowItemId)
+                .ToListAsync();
+            
+            var pendingForms = formItems
+                .Where(workflowItemId => workflowItemToHeadDict.ContainsKey(workflowItemId))
+                .GroupBy(workflowItemId => workflowItemToHeadDict[workflowItemId])
+                .Select(g => new { WorkflowHeadId = g.Key, Count = g.Count() })
+                .ToList();
+
+            // Her workflow için pending olan tüm FormUserIds'leri al (kullanıcıdan bağımsız)
+            var allFormItems = await _formItemsRepository
+                .Where(fi => 
+                    fi.FormItemStatus == FormItemStatus.Pending &&
+                    relevantWorkflowItemIds.Contains(fi.WorkflowItemId))
+                .Select(fi => new { fi.WorkflowItemId, fi.FormUserId })
+                .ToListAsync();
+            
+            var formUserIdsByWorkflow = allFormItems
+                .Where(fi => workflowItemToHeadDict.ContainsKey(fi.WorkflowItemId))
+                .GroupBy(fi => workflowItemToHeadDict[fi.WorkflowItemId])
+                .Select(g => new { 
+                    WorkflowHeadId = g.Key, 
+                    FormUserIds = g.Select(x => x.FormUserId).Distinct().ToList() 
+                })
+                .ToList();
 
             // Dictionary'ye çevir (hızlı lookup için)
             var pendingApprovalsDict = pendingApprovals.ToDictionary(x => x.WorkflowHeadId, x => x.Count);
             var pendingFormsDict = pendingForms.ToDictionary(x => x.WorkflowHeadId, x => x.Count);
+            var formUserIdsDict = formUserIdsByWorkflow.ToDictionary(x => x.WorkflowHeadId, x => x.FormUserIds);
 
             // DTO'ya map et (FormData performans için çıkartıldı - detay endpoint'inden alınmalı)
             var items = workflowHeads.Select(w => new ProcessHubItemDto
@@ -171,7 +248,8 @@ namespace formneo.api.Controllers
                 FormName = w.FormInstance?.Form?.FormName,
                 FormData = null, // Performans için liste görünümünde göndermiyoruz
                 PendingApprovalCount = pendingApprovalsDict.GetValueOrDefault(w.Id, 0),
-                PendingFormCount = pendingFormsDict.GetValueOrDefault(w.Id, 0)
+                PendingFormCount = pendingFormsDict.GetValueOrDefault(w.Id, 0),
+                FormUserIds = formUserIdsDict.GetValueOrDefault(w.Id, new List<string>())
             }).ToList();
 
             // Response oluştur
@@ -202,6 +280,13 @@ namespace formneo.api.Controllers
                 return Unauthorized("Kullanıcı bilgisi alınamadı");
             }
 
+            // Kullanıcı ID'sini al (Approvals için gerekli)
+            var currentUserId = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)?.Value;
+            if (string.IsNullOrEmpty(currentUserId))
+            {
+                return Unauthorized("Kullanıcı ID'si alınamadı");
+            }
+
             // Workflow'u bul
             var workflow = await _workflowRepository
                 .Where(w => w.Id == workflowHeadId)
@@ -215,20 +300,39 @@ namespace formneo.api.Controllers
                 return NotFound($"Workflow bulunamadı: {workflowHeadId}");
             }
 
-            // Pending item sayılarını al
+            // Pending item sayılarını al (USER ID ile)
+            // İki aşamalı sorgu: önce WorkflowItem'ları al, sonra ApproveItems/FormItems
+            
+            // 1. Bu WorkflowHead'e ait WorkflowItem ID'lerini al
+            var workflowItemIds = await _workflowItemRepository
+                .Where(wi => wi.WorkflowHeadId == workflowHeadId)
+                .Select(wi => wi.Id)
+                .ToListAsync();
+
+            // 2. ApproveItems sayısını al
             var pendingApprovalCount = await _approveItemsRepository
                 .Where(ai => 
-                    ai.WorkflowItem.WorkflowHeadId == workflowHeadId &&
-                    ai.ApproveUserId == currentUser &&
-                    ai.ApproverStatus == ApproverStatus.Pending)
+                    ai.ApproveUserId == currentUserId &&
+                    ai.ApproverStatus == ApproverStatus.Pending &&
+                    workflowItemIds.Contains(ai.WorkflowItemId))
                 .CountAsync();
 
+            // 3. FormItems sayısını al
             var pendingFormCount = await _formItemsRepository
                 .Where(fi => 
-                    fi.WorkflowItem.WorkflowHeadId == workflowHeadId &&
-                    fi.FormUserId == currentUser &&
-                    fi.FormItemStatus == FormItemStatus.Pending)
+                    fi.FormUserId == currentUserId &&
+                    fi.FormItemStatus == FormItemStatus.Pending &&
+                    workflowItemIds.Contains(fi.WorkflowItemId))
                 .CountAsync();
+
+            // 4. Bu workflow'daki pending FormUserIds'leri al
+            var formUserIds = await _formItemsRepository
+                .Where(fi => 
+                    fi.FormItemStatus == FormItemStatus.Pending &&
+                    workflowItemIds.Contains(fi.WorkflowItemId))
+                .Select(fi => fi.FormUserId)
+                .Distinct()
+                .ToListAsync();
 
             // DTO'ya map et (FormData dahil)
             var item = new ProcessHubItemDto
@@ -248,16 +352,187 @@ namespace formneo.api.Controllers
                 FormName = workflow.FormInstance?.Form?.FormName,
                 FormData = workflow.FormInstance?.FormData, // Detay'da FormData'yı gönderiyoruz
                 PendingApprovalCount = pendingApprovalCount,
-                PendingFormCount = pendingFormCount
+                PendingFormCount = pendingFormCount,
+                FormUserIds = formUserIds
             };
 
             return Ok(item);
         }
 
         /// <summary>
+        /// Onay akışı history'sini döndürür - sadece formNode ve formTaskNode tipleri
+        /// WorkflowItem bazında history, her item için FormItems'dan kimde beklediği (FormUser) bilgisi
+        /// </summary>
+        /// <param name="workflowHeadId">Workflow Head ID</param>
+        /// <returns>WorkflowHistoryResponseDto</returns>
+        [HttpGet("history/{workflowHeadId}")]
+        public async Task<ActionResult<WorkflowHistoryResponseDto>> GetHistory(Guid workflowHeadId)
+        {
+            // 1. WorkflowHead'i al (tek sorgu)
+            var workflowHead = await _workflowRepository
+                .Where(w => w.Id == workflowHeadId)
+                .Select(w => new
+                {
+                    w.Id,
+                    w.WorkflowName,
+                    w.WorkFlowDefinationId,
+                    w.CreateUser,
+                    w.CreatedDate,
+                    w.CurrentNodeId,
+                    w.CurrentNodeName,
+                    w.workFlowStatus,
+                    w.WorkFlowInfo,
+                    FormId = w.FormInstance != null ? w.FormInstance.FormId : (Guid?)null,
+                    FormName = w.FormInstance != null && w.FormInstance.Form != null ? w.FormInstance.Form.FormName : (string)null,
+                    FormData = w.FormInstance != null ? w.FormInstance.FormData : (string)null
+                })
+                .FirstOrDefaultAsync();
+
+            if (workflowHead == null)
+                return NotFound($"Workflow bulunamadı: {workflowHeadId}");
+
+            // 2. Sadece formNode ve formTaskNode tiplerindeki WorkflowItem'ları al (tek sorgu)
+            var workflowItems = await _workflowItemRepository
+                .Where(wi => wi.WorkflowHeadId == workflowHeadId &&
+                    (wi.NodeType == "formNode" || wi.NodeType == "formTaskNode"))
+                .OrderBy(wi => wi.CreatedDate)
+                .Select(wi => new
+                {
+                    wi.Id,
+                    wi.WorkflowHeadId,
+                    wi.NodeId,
+                    wi.NodeName,
+                    wi.NodeDescription,
+                    wi.NodeType,
+                    wi.workFlowNodeStatus,
+                    wi.CreatedDate,
+                    wi.UpdatedDate
+                })
+                .ToListAsync();
+
+            if (workflowItems.Count == 0)
+            {
+                return Ok(new WorkflowHistoryResponseDto
+                {
+                    HeadInfo = new WorkflowHeadInfoDto
+                    {
+                        Id = workflowHead.Id,
+                        WorkflowName = workflowHead.WorkflowName,
+                        WorkflowDefinationId = workflowHead.WorkFlowDefinationId,
+                        StartedBy = workflowHead.CreateUser,
+                        StartedDate = workflowHead.CreatedDate,
+                        CurrentNodeId = workflowHead.CurrentNodeId,
+                        CurrentNodeName = workflowHead.CurrentNodeName,
+                        WorkFlowStatus = workflowHead.workFlowStatus?.ToString() ?? "NotStarted",
+                        WorkFlowStatusText = GetWorkflowStatusText(workflowHead.workFlowStatus),
+                        WorkFlowInfo = workflowHead.WorkFlowInfo,
+                        FormId = workflowHead.FormId,
+                        FormName = workflowHead.FormName,
+                        FormData = workflowHead.FormData
+                    },
+                    HistoryItems = new List<WorkflowItemHistoryDto>(),
+                    TotalItemCount = 0
+                });
+            }
+
+            var workflowItemIds = workflowItems.Select(wi => wi.Id).ToList();
+
+            // 3. Tüm FormItems'ları tek sorguda al (önemli: FormUserId ve FormUserNameSurname - kimde bekliyor)
+            var formItems = await _formItemsRepository
+                .Where(fi => workflowItemIds.Contains(fi.WorkflowItemId))
+                .Select(fi => new
+                {
+                    fi.WorkflowItemId,
+                    fi.FormUserId,
+                    fi.FormUserNameSurname,
+                    fi.FormItemStatus
+                })
+                .ToListAsync();
+
+            // 4. WorkflowItemHistoryDto listesi oluştur
+            var historyItems = workflowItems.Select(wi =>
+            {
+                // Pending FormItems = kimde bekliyor (FormUser)
+                var pendingFormItems = formItems
+                    .Where(fi => fi.WorkflowItemId == wi.Id && fi.FormItemStatus == FormItemStatus.Pending)
+                    .ToList();
+
+                var pendingUsers = pendingFormItems
+                    .Select(fi => new PendingUserDto
+                    {
+                        UserId = fi.FormUserId,
+                        UserName = fi.FormUserNameSurname ?? fi.FormUserId,
+                        Department = null,
+                        DepartmentId = null,
+                        Position = null,
+                        PositionId = null
+                    })
+                    .GroupBy(u => u.UserId)
+                    .Select(g => g.First())
+                    .ToList();
+
+                return new WorkflowItemHistoryDto
+                {
+                    Id = wi.Id,
+                    WorkflowHeadId = wi.WorkflowHeadId,
+                    WorkflowNodeId = wi.NodeId,
+                    NodeName = wi.NodeName,
+                    NodeDescription = wi.NodeDescription,
+                    NodeType = wi.NodeType,
+                    NodeStatus = wi.workFlowNodeStatus.ToString(),
+                    NodeStatusText = GetWorkflowNodeStatusText(wi.workFlowNodeStatus),
+                    PendingWithUsers = pendingUsers,
+                    PendingUserCount = pendingUsers.Count,
+                    CreatedDate = wi.CreatedDate,
+                    UpdatedDate = wi.UpdatedDate
+                };
+            }).ToList();
+
+            var response = new WorkflowHistoryResponseDto
+            {
+                HeadInfo = new WorkflowHeadInfoDto
+                {
+                    Id = workflowHead.Id,
+                    WorkflowName = workflowHead.WorkflowName,
+                    WorkflowDefinationId = workflowHead.WorkFlowDefinationId,
+                    StartedBy = workflowHead.CreateUser,
+                    StartedDate = workflowHead.CreatedDate,
+                    CurrentNodeId = workflowHead.CurrentNodeId,
+                    CurrentNodeName = workflowHead.CurrentNodeName,
+                    WorkFlowStatus = workflowHead.workFlowStatus?.ToString() ?? "NotStarted",
+                    WorkFlowStatusText = GetWorkflowStatusText(workflowHead.workFlowStatus),
+                    WorkFlowInfo = workflowHead.WorkFlowInfo,
+                    FormId = workflowHead.FormId,
+                    FormName = workflowHead.FormName,
+                    FormData = workflowHead.FormData
+                },
+                HistoryItems = historyItems,
+                TotalItemCount = historyItems.Count
+            };
+
+            return Ok(response);
+        }
+
+        /// <summary>
         /// Workflow status'ü Türkçe açıklamaya çevirir
         /// </summary>
         private string GetWorkflowStatusText(WorkflowStatus? status)
+        {
+            return status switch
+            {
+                WorkflowStatus.NotStarted => "Başlamadı",
+                WorkflowStatus.InProgress => "Devam Ediyor",
+                WorkflowStatus.Completed => "Tamamlandı",
+                WorkflowStatus.Pending => "Beklemede",
+                WorkflowStatus.SendBack => "Geri Gönderildi",
+                _ => "Bilinmiyor"
+            };
+        }
+
+        /// <summary>
+        /// Workflow node status'ü Türkçe açıklamaya çevirir
+        /// </summary>
+        private string GetWorkflowNodeStatusText(WorkflowStatus status)
         {
             return status switch
             {
