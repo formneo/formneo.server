@@ -37,11 +37,18 @@ namespace formneo.core.DTOs.ProcessHub
     }
 
     /// <summary>
-    /// Process Hub tek bir workflow item'ı
+    /// Process Hub tek bir item - WorkflowHead bazında (My/All) veya WorkflowItem bazında (Approvals)
     /// </summary>
     public class ProcessHubItemDto
     {
+        /// <summary>
+        /// WorkflowHead Id - GetDetail/History için
+        /// </summary>
         public Guid Id { get; set; }
+        /// <summary>
+        /// WorkflowItem Id - Approvals görünümünde satır bazında (onay/form aksiyonu için)
+        /// </summary>
+        public Guid? WorkflowItemId { get; set; }
         public Guid WorkflowDefinationId { get; set; }
         public string WorkflowName { get; set; }
         public string CurrentNodeId { get; set; }
