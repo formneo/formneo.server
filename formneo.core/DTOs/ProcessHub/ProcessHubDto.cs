@@ -153,28 +153,19 @@ namespace formneo.core.DTOs.ProcessHub
         public string NodeStatusText { get; set; }
         
         /// <summary>
-        /// Kimde bekliyor bilgisi (FormTaskNode için)
+        /// Duruma göre özet: Beklemede ise "Ahmet Yılmaz, Mehmet Demir", Tamamlandı ise "Mehmet Demir - 10.02.2025"
         /// </summary>
-        public List<PendingUserDto> PendingWithUsers { get; set; } = new List<PendingUserDto>();
-        public int PendingUserCount { get; set; }
+        public string Summary { get; set; }
+        
+        /// <summary>
+        /// İşlem tarihi (Tamamlandı ise tamamlanma tarihi, Beklemede ise null)
+        /// </summary>
+        public DateTime? OperationDate { get; set; }
         
         /// <summary>
         /// Tarih bilgileri
         /// </summary>
         public DateTime CreatedDate { get; set; }
         public DateTime? UpdatedDate { get; set; }
-    }
-
-    /// <summary>
-    /// Bekleyen kullanıcı bilgisi (departman ve pozisyon ile)
-    /// </summary>
-    public class PendingUserDto
-    {
-        public string UserId { get; set; }
-        public string UserName { get; set; }
-        public string Department { get; set; }
-        public Guid? DepartmentId { get; set; }
-        public string Position { get; set; }
-        public Guid? PositionId { get; set; }
     }
 }

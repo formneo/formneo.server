@@ -199,10 +199,15 @@ namespace formneo.api.Controllers
                 {
                     var workflowItemMap = await _workflowItemRepository
                         .Where(wi => workflowHeadIds.Contains(wi.WorkflowHeadId))
-                        .Select(wi => new { wi.Id, wi.WorkflowHeadId, wi.NodeId, wi.NodeName })
+                        .Select(wi => new { wi.Id, wi.WorkflowHeadId, wi.NodeId, wi.NodeName, wi.NodeType })
                         .ToListAsync();
 
                     var workflowItemToHead = workflowItemMap.ToDictionary(x => x.Id, x => x.WorkflowHeadId);
+                    // My için: başlattığım startNode WorkflowItem Id'si (history'ye gerek yok, başlangıç node'u)
+                    var startNodeByHead = workflowItemMap
+                        .Where(wi => wi.NodeType == "startNode")
+                        .GroupBy(wi => wi.WorkflowHeadId)
+                        .ToDictionary(g => g.Key, g => g.First().Id);
                     var relevantIds = workflowItemToHead.Keys.ToList();
 
                     var approvalCounts = (await _approveItemsRepository
@@ -232,7 +237,7 @@ namespace formneo.api.Controllers
                     items = workflowHeads.Select(w => new ProcessHubItemDto
                     {
                         Id = w.Id,
-                        WorkflowItemId = null,
+                        WorkflowItemId = parsedViewType == ProcessViewType.My ? startNodeByHead.GetValueOrDefault(w.Id) : null,
                         WorkflowDefinationId = w.WorkFlowDefinationId,
                         WorkflowName = w.WorkflowName,
                         CurrentNodeId = null,
@@ -437,7 +442,7 @@ namespace formneo.api.Controllers
 
             var workflowItemIds = workflowItems.Select(wi => wi.Id).ToList();
 
-            // 3. Tüm FormItems'ları tek sorguda al (önemli: FormUserId ve FormUserNameSurname - kimde bekliyor)
+            // 3. Tüm FormItems'ları tek sorguda al (Pending + Completed - kimde bekliyor / kim tamamladı)
             var formItems = await _formItemsRepository
                 .Where(fi => workflowItemIds.Contains(fi.WorkflowItemId))
                 .Select(fi => new
@@ -445,46 +450,66 @@ namespace formneo.api.Controllers
                     fi.WorkflowItemId,
                     fi.FormUserId,
                     fi.FormUserNameSurname,
-                    fi.FormItemStatus
+                    fi.FormItemStatus,
+                    fi.UpdatedDate
                 })
                 .ToListAsync();
 
-            // 4. Tüm Pending FormUserId'leri topla ve UserOrgInfoService ile Ad Soyad, Departman, Pozisyon al
-            var allPendingUserIds = formItems
-                .Where(fi => fi.FormItemStatus == FormItemStatus.Pending)
+            // 4. Tüm Pending ve Completed FormUserId'leri topla, UserOrgInfoService ile Ad Soyad, Departman, Pozisyon al
+            var allUserIds = formItems
                 .Select(fi => fi.FormUserId)
                 .Distinct()
                 .ToList();
 
-            var userOrgInfos = allPendingUserIds.Count > 0
-                ? await _userOrgInfoService.GetUserOrgInfosBatchAsync(allPendingUserIds)
+            var userOrgInfos = allUserIds.Count > 0
+                ? await _userOrgInfoService.GetUserOrgInfosBatchAsync(allUserIds)
                 : new Dictionary<string, formneo.core.DTOs.UserOrgInfoDto>();
 
             // 5. WorkflowItemHistoryDto listesi oluştur
             var historyItems = workflowItems.Select(wi =>
             {
-                // Pending FormItems = kimde bekliyor (FormUser)
                 var pendingFormItems = formItems
                     .Where(fi => fi.WorkflowItemId == wi.Id && fi.FormItemStatus == FormItemStatus.Pending)
                     .ToList();
 
-                var pendingUsers = pendingFormItems
-                    .Select(fi =>
-                    {
-                        var orgInfo = userOrgInfos.GetValueOrDefault(fi.FormUserId);
-                        return new PendingUserDto
-                        {
-                            UserId = fi.FormUserId,
-                            UserName = orgInfo?.UserName ?? fi.FormUserNameSurname ?? fi.FormUserId,
-                            Department = orgInfo?.Department,
-                            DepartmentId = orgInfo?.DepartmentId,
-                            Position = orgInfo?.Position,
-                            PositionId = orgInfo?.PositionId
-                        };
-                    })
-                    .GroupBy(u => u.UserId)
-                    .Select(g => g.First())
+                var completedFormItems = formItems
+                    .Where(fi => fi.WorkflowItemId == wi.Id && fi.FormItemStatus == FormItemStatus.Completed)
                     .ToList();
+
+                string summary = null;
+                DateTime? operationDate = null;
+
+                if (completedFormItems.Count > 0)
+                {
+                    // Tamamlandı: "Mehmet Demir - 10.02.2025, Ahmet Yılmaz - 11.02.2025" (kullanıcı bazında en son tarih)
+                    var byUser = completedFormItems
+                        .GroupBy(fi => fi.FormUserId)
+                        .Select(g =>
+                        {
+                            var fi = g.First();
+                            var name = userOrgInfos.GetValueOrDefault(fi.FormUserId)?.UserName ?? fi.FormUserNameSurname ?? fi.FormUserId;
+                            var latestDate = g.Max(x => x.UpdatedDate);
+                            var dateStr = latestDate.HasValue ? latestDate.Value.ToString("dd.MM.yyyy") : "";
+                            return string.IsNullOrEmpty(dateStr) ? name : $"{name} - {dateStr}";
+                        })
+                        .ToList();
+                    summary = string.Join(", ", byUser);
+                    operationDate = completedFormItems.Max(fi => fi.UpdatedDate);
+                }
+                else if (pendingFormItems.Count > 0)
+                {
+                    // Beklemede: "Ahmet Yılmaz, Mehmet Demir"
+                    var names = pendingFormItems
+                        .Select(fi => userOrgInfos.GetValueOrDefault(fi.FormUserId)?.UserName ?? fi.FormUserNameSurname ?? fi.FormUserId)
+                        .Distinct()
+                        .ToList();
+                    summary = string.Join(", ", names);
+                }
+
+                var nodeStatusText = GetWorkflowNodeStatusText(wi.workFlowNodeStatus);
+                var nodeDescription = string.IsNullOrEmpty(summary)
+                    ? nodeStatusText
+                    : $"{nodeStatusText}: {summary}";
 
                 return new WorkflowItemHistoryDto
                 {
@@ -492,12 +517,12 @@ namespace formneo.api.Controllers
                     WorkflowHeadId = wi.WorkflowHeadId,
                     WorkflowNodeId = wi.NodeId,
                     NodeName = wi.NodeName,
-                    NodeDescription = wi.NodeDescription,
+                    NodeDescription = nodeDescription,
                     NodeType = wi.NodeType,
                     NodeStatus = wi.workFlowNodeStatus.ToString(),
-                    NodeStatusText = GetWorkflowNodeStatusText(wi.workFlowNodeStatus),
-                    PendingWithUsers = pendingUsers,
-                    PendingUserCount = pendingUsers.Count,
+                    NodeStatusText = nodeStatusText,
+                    Summary = summary,
+                    OperationDate = operationDate,
                     CreatedDate = wi.CreatedDate,
                     UpdatedDate = wi.UpdatedDate
                 };
