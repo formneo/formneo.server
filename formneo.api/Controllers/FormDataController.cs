@@ -138,8 +138,8 @@ namespace formneo.api.Controllers
             var existing = await _formRepository.GetByIdStringGuidAsync(formDto.Id);
             if (existing == null)
                 return NotFound();
-            if (existing.PublicationStatus != FormPublicationStatus.Draft)
-                return BadRequest("Only Draft forms can be updated.");
+            // if (existing.PublicationStatus != FormPublicationStatus.Draft)
+            //     return BadRequest("xOnly Draft forms can be updated.");
 
             // Map updatable fields only
             existing.FormName = formDto.FormName;
