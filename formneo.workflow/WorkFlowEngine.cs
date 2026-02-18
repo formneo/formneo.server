@@ -121,6 +121,12 @@ public class NodeData
     /// FormTaskNode için selectionData (manual assignment için)
     /// </summary>
     public object selectionData { get; set; }
+    
+    /// <summary>
+    /// evetHayirConditionNode için JsonLogic kuralı (form verisine göre evet/hayir kararı)
+    /// Örn: {"and":[{"==":[{"var":"qbpsefg58bj.x11sx8k2s2h"},"avans"]}]}
+    /// </summary>
+    public object jsonLogicRule { get; set; }
 }
 
 public class stoptype
@@ -380,6 +386,20 @@ public class Workflow
             }
         }
         
+        if (result.NodeType == "evetHayirConditionNode")
+        {
+            string nextNode = ExecuteEvetHayirConditionNode(currentNode, result, Parameter);
+
+            if (nextNode != "" && nextNode != null)
+            {
+                await ExecuteNode(nextNode);
+            }
+            else
+            {
+                return;
+            }
+        }
+        
         if (result.NodeType == "approverNode")
         {
             string nextNode = await ExecuteApprove(currentNode, result, Parameter);
@@ -451,7 +471,7 @@ public class Workflow
             //    return;
             //}
         }
-        if (result.NodeType != "EmailNode" && result.NodeType != "ApproverNode" && result.NodeType != "formNode" && result.NodeType != "formTaskNode" && result.NodeType != "alertNode" && result.NodeType != "scriptNode")
+        if (result.NodeType != "EmailNode" && result.NodeType != "ApproverNode" && result.NodeType != "formNode" && result.NodeType != "formTaskNode" && result.NodeType != "alertNode" && result.NodeType != "scriptNode" && result.NodeType != "evetHayirConditionNode" && result.NodeType != "sqlConditionNode")
         {
 
             if (_workFlowItems.Contains(result))
@@ -511,9 +531,117 @@ public class Workflow
         {
             parameter = "yes";
         }
+        else
+        {
+            parameter = "no";
+        }
 
         // Düğüme bağlı çıkış bağlantılarını bulun
         var nextNode = FindLinkForPort(currentNode.Id, parameter);
+        return nextNode;
+    }
+
+    /// <summary>
+    /// evetHayirConditionNode: Form verisine göre JsonLogic kuralını değerlendirir.
+    /// Koşul true ise "evet" portuna, false ise "hayir" portuna yönlendirir.
+    /// Form verisi _payloadJson'dan alınır (formNode SEND ile gönderildiğinde).
+    /// </summary>
+    private string ExecuteEvetHayirConditionNode(WorkflowNode currentNode, WorkflowItem workFlowItem, string parameter)
+    {
+        if (currentNode.Data?.jsonLogicRule == null)
+        {
+            workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+            _workFlowItems.Add(workFlowItem);
+            // Kural yoksa hayir portuna git (güvenli varsayılan)
+            return FindLinkForPort(currentNode.Id, "hayir") ?? FindLinkForPort(currentNode.Id, "no");
+        }
+
+        JObject rule;
+        if (currentNode.Data.jsonLogicRule is string ruleStr)
+        {
+            try
+            {
+                rule = JObject.Parse(ruleStr);
+            }
+            catch
+            {
+                workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+                _workFlowItems.Add(workFlowItem);
+                return FindLinkForPort(currentNode.Id, "hayir") ?? FindLinkForPort(currentNode.Id, "no");
+            }
+        }
+        else if (currentNode.Data.jsonLogicRule is JObject ruleObj)
+        {
+            rule = ruleObj;
+        }
+        else
+        {
+            try
+            {
+                rule = JObject.Parse(JsonConvert.SerializeObject(currentNode.Data.jsonLogicRule));
+            }
+            catch
+            {
+                workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+                _workFlowItems.Add(workFlowItem);
+                return FindLinkForPort(currentNode.Id, "hayir") ?? FindLinkForPort(currentNode.Id, "no");
+            }
+        }
+
+        JObject data;
+        if (string.IsNullOrEmpty(_payloadJson))
+        {
+            data = new JObject();
+        }
+        else
+        {
+            try
+            {
+                data = JObject.Parse(_payloadJson);
+            }
+            catch
+            {
+                data = new JObject();
+            }
+        }
+
+        // Flat form verisini JsonLogic path'lerine göre normalize et (qbpsefg58bj.x11sx8k2s2h vs x11sx8k2s2h uyumu)
+        data = NormalizeFormDataForJsonLogic(data, rule);
+
+        bool conditionResult = false;
+        try
+        {
+            var evaluator = new JsonLogicEvaluator(EvaluateOperators.Default);
+            var evalResult = evaluator.Apply(rule, data);
+            conditionResult = evalResult is bool b && b;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[evetHayirConditionNode] JsonLogic değerlendirme hatası: {ex.Message}");
+            workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+            workFlowItem.NodeDescription = $"Koşul değerlendirme hatası: {ex.Message}";
+            _workFlowItems.Add(workFlowItem);
+            return FindLinkForPort(currentNode.Id, "hayir") ?? FindLinkForPort(currentNode.Id, "no");
+        }
+
+        workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+        _workFlowItems.Add(workFlowItem);
+
+        string port = conditionResult ? "evet" : "hayir";
+        var nextNode = FindLinkForPort(currentNode.Id, port);
+
+        if (string.IsNullOrEmpty(nextNode))
+        {
+            var alternativePorts = conditionResult
+                ? new[] { "evet", "EVET", "Evet", "yes", "YES", "Yes", "true" }
+                : new[] { "hayir", "HAYIR", "Hayir", "no", "NO", "No", "false" };
+            foreach (var altPort in alternativePorts)
+            {
+                nextNode = FindLinkForPort(currentNode.Id, altPort);
+                if (!string.IsNullOrEmpty(nextNode)) break;
+            }
+        }
+
         return nextNode;
     }
 
@@ -1361,6 +1489,101 @@ public class Workflow
         }
         
         return previousNodes;
+    }
+
+    /// <summary>
+    /// JsonLogic kuralındaki tüm "var" path'lerini recursive olarak çıkarır.
+    /// </summary>
+    private static HashSet<string> ExtractVarPathsFromRule(JToken rule)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        ExtractVarPathsRecursive(rule, paths);
+        return paths;
+    }
+
+    private static void ExtractVarPathsRecursive(JToken token, HashSet<string> paths)
+    {
+        if (token == null) return;
+        if (token is JObject obj)
+        {
+            if (obj["var"] != null)
+            {
+                var varVal = obj["var"];
+                if (varVal is JValue jv && jv.Value is string path && !string.IsNullOrEmpty(path))
+                    paths.Add(path);
+            }
+            foreach (var child in obj.Properties().Select(p => p.Value))
+                ExtractVarPathsRecursive(child, paths);
+        }
+        else if (token is JArray arr)
+        {
+            foreach (var item in arr)
+                ExtractVarPathsRecursive(item, paths);
+        }
+    }
+
+    /// <summary>
+    /// Flat form verisini JsonLogic path'lerine göre normalize eder.
+    /// Client flat gönderiyorsa (x11sx8k2s2h) ama kural nested bekliyorsa (qbpsefg58bj.x11sx8k2s2h),
+    /// nested yapıyı oluşturur. Hem flat hem nested veri desteklenir.
+    /// </summary>
+    private static JObject NormalizeFormDataForJsonLogic(JObject data, JObject rule)
+    {
+        var varPaths = ExtractVarPathsFromRule(rule);
+        var result = (JObject)data.DeepClone();
+
+        foreach (var path in varPaths)
+        {
+            if (string.IsNullOrEmpty(path) || !path.Contains(".")) continue;
+
+            var parts = path.Split('.');
+            var leaf = parts[^1];
+
+            var existingValue = GetNestedValue(result, path);
+            if (existingValue != null) continue;
+
+            var flatValue = result[leaf] ?? result[path];
+            if (flatValue == null) continue;
+
+            SetNestedValue(result, path, flatValue.DeepClone());
+        }
+
+        return result;
+    }
+
+    private static JToken GetNestedValue(JObject obj, string path)
+    {
+        var parts = path.Split('.');
+        JToken current = obj;
+        foreach (var part in parts)
+        {
+            if (current is JObject jo && jo[part] != null)
+                current = jo[part];
+            else
+                return null;
+        }
+        return current;
+    }
+
+    private static void SetNestedValue(JObject obj, string path, JToken value)
+    {
+        var parts = path.Split('.');
+        JObject current = obj;
+        for (int i = 0; i < parts.Length - 1; i++)
+        {
+            var part = parts[i];
+            if (current[part] is JObject existing)
+            {
+                current = existing;
+            }
+            else
+            {
+                var newObj = new JObject();
+                current[part] = newObj;
+                current = newObj;
+            }
+        }
+        current[parts[^1]] = value;
     }
 
     private string FindLinkForPort(string fromNode, string port)
