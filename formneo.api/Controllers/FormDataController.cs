@@ -1,4 +1,5 @@
-﻿using AutoMapper;
+using System;
+using AutoMapper;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -9,6 +10,7 @@ using NLayer.Core.Services;
 using System.ComponentModel;
 using System.Reflection;
 using formneo.api.Filters;
+using formneo.core.DTOs;
 using formneo.core.DTOs;
 using formneo.core.DTOs.FormAuth;
 using formneo.core.DTOs.FormDatas;
@@ -77,36 +79,41 @@ namespace formneo.api.Controllers
         [HttpGet("{id}")]
         public async Task<ActionResult<FormDataListDto>> GetById(string id)
         {
-                if (!Guid.TryParse(id, out var guid))
+            if (!Guid.TryParse(id, out var guid))
             {
                 return BadRequest("Geçersiz id formatı");
             }
-            var query = _formRepository.Where(x=>x.Id==guid).Include(x => x.WorkFlowDefination);
-            var dto = await query.Select(x => new FormDataListDto
+            var form = await _formRepository.Where(x => x.Id == guid).Include(x => x.WorkFlowDefination).FirstOrDefaultAsync();
+            if (form == null)
             {
-                CreatedDate = x.CreatedDate,
-                
-                FormCategory = x.FormCategory,
-                FormName = x.FormName,
-                FormCategoryText = x.FormCategory.GetDescription(),
-                FormDescription = x.FormDescription,
-                FormPriority = x.FormPriority,
-                FormType = x.FormType,
-                FormDesign = x.FormDesign,
-                FormPriorityText = x.FormPriority.GetDescription(),
-                FormTypeText = x.FormType.GetDescription(),
-                Id = x.Id,
-                IsActive = x.IsActive,
-                JavaScriptCode = x.JavaScriptCode,
-                Revision = x.Revision,
-                WorkFlowDefinationId = x.WorkFlowDefinationId,
-                WorkFlowName = x.WorkFlowDefination != null ? x.WorkFlowDefination.WorkflowName : null,
-                ParentFormId=x.ParentFormId,
-                CanEdit = x.CanEdit,
-                ShowInMenu = x.ShowInMenu,
-                PublicationStatus = x.PublicationStatus,
-                PublicationStatusText = x.PublicationStatus.GetDescription(),
-            }).FirstAsync();
+                return NotFound();
+            }
+
+            var dto = new FormDataListDto
+            {
+                CreatedDate = form.CreatedDate,
+                FormCategory = form.FormCategory,
+                FormName = form.FormName,
+                FormCategoryText = form.FormCategory.GetDescription(),
+                FormDescription = form.FormDescription,
+                FormPriority = form.FormPriority,
+                FormType = form.FormType,
+                FormDesign = form.FormDesign,
+                FormPriorityText = form.FormPriority.GetDescription(),
+                FormTypeText = form.FormType.GetDescription(),
+                Id = form.Id,
+                IsActive = form.IsActive,
+                JavaScriptCode = form.JavaScriptCode,
+                Revision = form.Revision,
+                WorkFlowDefinationId = form.WorkFlowDefinationId,
+                WorkFlowName = form.WorkFlowDefination?.WorkflowName,
+                ParentFormId = form.ParentFormId,
+                CanEdit = form.CanEdit,
+                ShowInMenu = form.ShowInMenu,
+                PublicationStatus = form.PublicationStatus,
+                PublicationStatusText = form.PublicationStatus.GetDescription(),
+                Buttons = ExtractUserButtonsFromWorkflowDefinition(form.WorkFlowDefination?.Defination, form.Id)
+            };
 
             return dto;
         }
@@ -423,6 +430,77 @@ namespace formneo.api.Controllers
             return attribute?.Description ?? value.ToString();
         }
 
+        /// <summary>
+        /// Workflow definition'dan bu forma ait formTaskNode'lardaki source: "user" butonlarını çıkarır.
+        /// FormId ile eşleşen formTaskNode'ların buttons dizisinden filtrelenir.
+        /// </summary>
+        private static List<FormTaskNodeButtonDto> ExtractUserButtonsFromWorkflowDefinition(string definitionJson, Guid formId)
+        {
+            if (string.IsNullOrEmpty(definitionJson))
+                return null;
+
+            try
+            {
+                var definition = JObject.Parse(definitionJson);
+                var nodes = definition["nodes"] as JArray;
+                if (nodes == null)
+                    return null;
+
+                var formIdStr = formId.ToString();
+                var allButtons = new List<FormTaskNodeButtonDto>();
+                var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var node in nodes)
+                {
+                    var nodeType = node["type"]?.ToString() ?? node["nodeClazz"]?.ToString();
+                    if (string.IsNullOrEmpty(nodeType) || !nodeType.Contains("FormTask", StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var nodeFormId = node["data"]?["formId"]?.ToString()
+                        ?? node["data"]?["FormId"]?.ToString()
+                        ?? node["data"]?["code"]?.ToString();
+                    if (string.IsNullOrEmpty(nodeFormId) || !string.Equals(nodeFormId, formIdStr, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
+                    var buttonsArray = node["data"]?["buttons"] as JArray;
+                    if (buttonsArray == null)
+                        continue;
+
+                    foreach (var b in buttonsArray)
+                    {
+                        var source = b["source"]?.ToString();
+                        if (!string.Equals(source, "user", StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        var btnId = b["id"]?.ToString();
+                        if (!string.IsNullOrEmpty(btnId) && seenIds.Contains(btnId))
+                            continue;
+                        if (!string.IsNullOrEmpty(btnId))
+                            seenIds.Add(btnId);
+
+                        allButtons.Add(new FormTaskNodeButtonDto
+                        {
+                            Id = btnId,
+                            Label = b["label"]?.ToString(),
+                            Action = b["action"]?.ToString(),
+                            Type = b["type"]?.ToString(),
+                            Icon = b["icon"]?.ToString(),
+                            Color = b["color"]?.ToString(),
+                            Name = b["name"]?.ToString(),
+                            Description = b["description"]?.ToString(),
+                            Visible = b["visible"]?.Value<bool?>(),
+                            Source = source
+                        });
+                    }
+                }
+
+                return allButtons.Count > 0 ? allButtons : null;
+            }
+            catch
+            {
+                return null;
+            }
+        }
 
         // Yardımcı metotlar
         private async Task<MenuListDto?> EnsureFormsRootAsync()

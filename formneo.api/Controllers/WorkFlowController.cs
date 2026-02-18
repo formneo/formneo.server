@@ -7,6 +7,7 @@ using Microsoft.EntityFrameworkCore;
 using Newtonsoft.Json.Linq;
 using NLayer.Core.Services;
 using NLayer.Service.Services;
+using System;
 using System.Linq;
 using formneo.core;
 using formneo.core.DTOs;
@@ -529,8 +530,9 @@ namespace formneo.api.Controllers
             // WorkflowHeadId'yi al
             Guid workflowHeadId = workflowItem.WorkflowHeadId;
 
-            // Node'un script'ini WorkflowDefinition'dan al
+            // Node'un script'ini ve butonlarını WorkflowDefinition'dan al
             string nodeScript = null;
+            List<FormTaskNodeButtonDto> nodeButtons = null;
             if (workflowItem.WorkflowHead?.WorkFlowDefination?.Defination != null)
             {
                 try
@@ -542,14 +544,36 @@ namespace formneo.api.Controllers
                         var currentNode = nodes.FirstOrDefault(n => n["id"]?.ToString() == workflowItem.NodeId);
                         if (currentNode != null)
                         {
-                            // Script'i node.data.script'ten al
+                            // Script'i node.data.initScript'ten al
                             nodeScript = currentNode["data"]?["initScript"]?.ToString();
+
+                            // Butonları node.data.buttons'tan al - sadece source: "user" olanlar
+                            var buttonsArray = currentNode["data"]?["buttons"] as JArray;
+                            if (buttonsArray != null)
+                            {
+                                nodeButtons = buttonsArray
+                                    .Where(b => string.Equals(b["source"]?.ToString(), "user", StringComparison.OrdinalIgnoreCase))
+                                    .Select(b => new FormTaskNodeButtonDto
+                                    {
+                                        Id = b["id"]?.ToString(),
+                                        Label = b["label"]?.ToString(),
+                                        Action = b["action"]?.ToString(),
+                                        Type = b["type"]?.ToString(),
+                                        Icon = b["icon"]?.ToString(),
+                                        Color = b["color"]?.ToString(),
+                                        Name = b["name"]?.ToString(),
+                                        Description = b["description"]?.ToString(),
+                                        Visible = b["visible"]?.Value<bool?>(),
+                                        Source = b["source"]?.ToString()
+                                    })
+                                    .ToList();
+                            }
                         }
                     }
                 }
                 catch
                 {
-                    // JSON parse hatası durumunda nodeScript null kalır
+                    // JSON parse hatası durumunda nodeScript ve nodeButtons null kalır
                 }
             }
 
@@ -641,7 +665,8 @@ namespace formneo.api.Controllers
                     FormDescription = formItem.FormDescription,
                     FormUser = formItem.FormUser?.UserName ?? formItem.FormUserId,  // ✅ Navigation property'den email al
                     FormItemStatus = formItem.FormItemStatus,
-                    NodeScript = nodeScript  // Node'un script'i (scriptNode için)
+                    NodeScript = nodeScript,  // Node'un script'i (scriptNode için)
+                    Buttons = nodeButtons  // FormTaskNode'dan source: "user" butonları
                 };
             }
             else if (isApproverNode)
@@ -734,7 +759,8 @@ namespace formneo.api.Controllers
                     ApproveUserNameSurname = approveItem.ApproveUserNameSurname,
                     ApproverStatus = approveItem.ApproverStatus,
                     WorkFlowDescription = approveItem.WorkFlowDescription,
-                    NodeScript = nodeScript  // Node'un script'i (scriptNode için)
+                    NodeScript = nodeScript,  // Node'un script'i (scriptNode için)
+                    Buttons = nodeButtons  // ApproverNode'da da varsa source: "user" butonları
                 };
             }
 

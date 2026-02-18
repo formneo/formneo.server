@@ -1093,14 +1093,20 @@ public class Workflow
         }
         
         // DURUM 2: CONTINUE - Workflow Devam Et
-        if (!string.IsNullOrEmpty(parameter))
+        if (!string.IsNullOrWhiteSpace(parameter))
         {
-            // ✅ SADE VE TEMİZ: Sadece WorkflowItem'ı Completed yap
-            // FormItem güncellemesi NodeCompletionHandler'da yapılacak!
-            workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+            // Önce sonraki node var mı kontrol et - edge yoksa Completed YAPMA
+            var nextNode = FindLinkForPort(currentNode.Id, parameter);
             
-            // Sonraki node'a geç
-            return FindLinkForPort(currentNode.Id, parameter);
+            // Sadece geçerli bir çıkış (edge) varsa WorkflowItem'ı Completed yap
+            // Boş buton veya çıkışı olmayan buton → Pending kalır, workflow durur
+            if (!string.IsNullOrEmpty(nextNode))
+            {
+                workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
+                return nextNode;
+            }
+            // Edge yoksa: Pending kal, null dön (workflow durur)
+            return null;
         }
         
         // Buraya gelmemeli (yukarıdaki if'ler return yapıyor)

@@ -39,34 +39,39 @@ namespace formneo.workflow.NodeCompletionHandlers
                     $"Only assigned users can complete this form.");
             }
 
-            // 2. ✅ FormItem'ı COMPLETED YAP (Handler'ın ana görevi!)
-            formItem.FormItemStatus = FormItemStatus.Completed;
-
-            // 3. ✅ FormData'yı KAYDET
+            // 2. ✅ FormData'yı HER ZAMAN KAYDET (taslak dahil)
             if (!string.IsNullOrEmpty(context.PayloadJson))
             {
                 formItem.FormData = context.PayloadJson;
             }
 
-            // 4. Note ekle
+            // 3. Note ekle
             if (context.Dto.Note != null)
             {
                 formItem.FormUserMessage = context.Dto.Note;
             }
 
-            // 5. Diğer FormItem'ları da Completed yap (biri doldurunca diğerleri kapanır)
-            if (context.Node.formItems.Count > 1)
+            // 4. WorkflowItem Completed ise → FormItem'ı da Completed yap (adım gerçekten tamamlandı)
+            //    WorkflowItem Pending ise → Taslak kayıt, FormItem Pending kalır (görevlerimde görünmeye devam eder)
+            var isStepCompleted = context.Node.workFlowNodeStatus == WorkflowStatus.Completed;
+            if (isStepCompleted)
             {
-                foreach (var otherFormItem in context.Node.formItems)
+                formItem.FormItemStatus = FormItemStatus.Completed;
+
+                // Diğer FormItem'ları da Completed yap (biri doldurunca diğerleri kapanır)
+                if (context.Node.formItems.Count > 1)
                 {
-                    if (otherFormItem.Id != formItem.Id)
+                    foreach (var otherFormItem in context.Node.formItems)
                     {
-                        otherFormItem.FormItemStatus = FormItemStatus.Completed;
+                        if (otherFormItem.Id != formItem.Id)
+                        {
+                            otherFormItem.FormItemStatus = FormItemStatus.Completed;
+                        }
                     }
                 }
             }
 
-            // 6. FormInstance oluştur/güncelle
+            // 5. FormInstance oluştur/güncelle (taslak dahil - form verisi her zaman kaydedilir)
             FormInstance formInstance = null;
             if (!string.IsNullOrEmpty(context.PayloadJson))
             {

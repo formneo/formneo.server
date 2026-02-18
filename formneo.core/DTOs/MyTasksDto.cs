@@ -282,6 +282,12 @@ namespace formneo.core.DTOs
         /// </summary>
         public string? NodeScript { get; set; }
 
+        /// <summary>
+        /// FormTaskNode'dan alınan kullanıcı butonları (source: "user" olanlar)
+        /// Workflow definition'daki node.data.buttons içinden filtrelenir
+        /// </summary>
+        public List<FormTaskNodeButtonDto>? Buttons { get; set; }
+
         // ========== UserTask (approverNode) için bilgiler ==========
         
         /// <summary>

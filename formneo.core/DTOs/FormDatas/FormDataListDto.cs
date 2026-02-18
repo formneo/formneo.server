@@ -1,9 +1,10 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using formneo.core.DTOs;
 using formneo.core.Models.FormEnums;
 
 namespace formneo.core.DTOs.FormDatas
@@ -33,5 +34,11 @@ namespace formneo.core.DTOs.FormDatas
 
         public FormPublicationStatus PublicationStatus { get; set; }
         public string? PublicationStatusText { get; set; }
+
+        /// <summary>
+        /// Workflow definition'daki formTaskNode'lardan alınan kullanıcı butonları (source: "user" olanlar)
+        /// Bu forma ait formTaskNode'lardaki buttons dizisinden filtrelenir
+        /// </summary>
+        public List<FormTaskNodeButtonDto>? Buttons { get; set; }
     }
 }
