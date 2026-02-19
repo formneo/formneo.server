@@ -66,7 +66,7 @@ namespace formneo.workflow.Services
                 return new WorkFlowHeadDtoResultStartOrContinue
                 {
                     Id = Guid.Empty.ToString(),
-                    WorkFlowStatus = WorkflowStatus.NotStarted
+                    WorkFlowStatus = null
                 };
             }
 
@@ -129,10 +129,10 @@ namespace formneo.workflow.Services
             if (workflowHead.workflowItems == null) 
                 return null;
 
-            // Öncelik sırası: alertNode > formNode > approverNode
+            // Öncelik sırası: alertNode > formNode > formTaskNode > approverNode
             return workflowHead.workflowItems.FirstOrDefault(item => 
                 item.workFlowNodeStatus == WorkflowStatus.Pending && 
-                (item.NodeType == "alertNode" || item.NodeType == "formNode" || item.NodeType == "approverNode")) 
+                (item.NodeType == "alertNode" || item.NodeType == "formNode" || item.NodeType == "formTaskNode" || item.NodeType == "approverNode")) 
                 ?? workflowHead.workflowItems.FirstOrDefault(item => 
                     item.workFlowNodeStatus == WorkflowStatus.Pending);
         }

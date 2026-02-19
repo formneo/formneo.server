@@ -20,6 +20,8 @@ using formneo.core.Models.FormEnums;
 using formneo.core.Repositories;
 using formneo.core.Services;
 using formneo.core.DTOs.Menu;
+using formneo.repository;
+using formneo.api.Helpers;
 
 namespace formneo.api.Controllers
 {
@@ -34,15 +36,17 @@ namespace formneo.api.Controllers
         private readonly IServiceWithDto<FormRuleEngine, FormRuleEngineDto> _formRuleEngineService;
         private readonly IFormRepository _formRepository;
         private readonly IGlobalServiceWithDto<Menu, MenuListDto> _menuService;
+        private readonly AppDbContext _context;
 
 
-        public FormDataController(IMapper mapper, IFormService formService, IServiceWithDto<FormRuleEngine, FormRuleEngineDto> formRuleEngineService, IFormRepository formRepository, IGlobalServiceWithDto<Menu, MenuListDto> menuService)
+        public FormDataController(IMapper mapper, IFormService formService, IServiceWithDto<FormRuleEngine, FormRuleEngineDto> formRuleEngineService, IFormRepository formRepository, IGlobalServiceWithDto<Menu, MenuListDto> menuService, AppDbContext context)
         {
             _mapper = mapper;
             _service = formService;
             _formRuleEngineService = formRuleEngineService;
             _formRepository = formRepository;
             _menuService = menuService;
+            _context = context;
         }
         /// GET api/products
         [HttpGet]
@@ -83,11 +87,31 @@ namespace formneo.api.Controllers
             {
                 return BadRequest("Geçersiz id formatı");
             }
-            var form = await _formRepository.Where(x => x.Id == guid).Include(x => x.WorkFlowDefination).FirstOrDefaultAsync();
+            var form = await _formRepository.GetAll().Include(x => x.WorkFlowDefination).FirstOrDefaultAsync(x => x.Id == guid);
             if (form == null)
             {
                 return NotFound();
             }
+
+            // Include ile WorkFlowDefination null gelebilir (query filter / tenant farkı).
+            // Formun bağlı olduğu TEK workflow'dan butonları al (Form.WorkFlowDefinationId veya WorkFlowDefination.FormId).
+            string definitionJson = form.WorkFlowDefination?.Defination;
+            string workflowName = form.WorkFlowDefination?.WorkflowName;
+            if (string.IsNullOrEmpty(definitionJson))
+            {
+                var wfDef = await _context.Set<WorkFlowDefination>()
+                    .AsNoTracking()
+                    .IgnoreQueryFilters()
+                    .Where(x => (form.WorkFlowDefinationId.HasValue && x.Id == form.WorkFlowDefinationId.Value) || x.FormId == form.Id)
+                    .FirstOrDefaultAsync();
+                definitionJson = wfDef?.Defination;
+                workflowName ??= wfDef?.WorkflowName;
+            }
+
+            var buttons = WorkflowDefinitionButtonExtractor.ExtractUserButtons(
+                string.IsNullOrEmpty(definitionJson) ? new List<string>() : new List<string> { definitionJson },
+                form.Id,
+                form.ParentFormId);
 
             var dto = new FormDataListDto
             {
@@ -106,13 +130,13 @@ namespace formneo.api.Controllers
                 JavaScriptCode = form.JavaScriptCode,
                 Revision = form.Revision,
                 WorkFlowDefinationId = form.WorkFlowDefinationId,
-                WorkFlowName = form.WorkFlowDefination?.WorkflowName,
+                WorkFlowName = workflowName,
                 ParentFormId = form.ParentFormId,
                 CanEdit = form.CanEdit,
                 ShowInMenu = form.ShowInMenu,
                 PublicationStatus = form.PublicationStatus,
                 PublicationStatusText = form.PublicationStatus.GetDescription(),
-                Buttons = ExtractUserButtonsFromWorkflowDefinition(form.WorkFlowDefination?.Defination, form.Id)
+                Buttons = buttons
             };
 
             return dto;
@@ -428,78 +452,6 @@ namespace formneo.api.Controllers
             var attribute = field?.GetCustomAttribute<DescriptionAttribute>();
 
             return attribute?.Description ?? value.ToString();
-        }
-
-        /// <summary>
-        /// Workflow definition'dan bu forma ait formTaskNode'lardaki source: "user" butonlarını çıkarır.
-        /// FormId ile eşleşen formTaskNode'ların buttons dizisinden filtrelenir.
-        /// </summary>
-        private static List<FormTaskNodeButtonDto> ExtractUserButtonsFromWorkflowDefinition(string definitionJson, Guid formId)
-        {
-            if (string.IsNullOrEmpty(definitionJson))
-                return null;
-
-            try
-            {
-                var definition = JObject.Parse(definitionJson);
-                var nodes = definition["nodes"] as JArray;
-                if (nodes == null)
-                    return null;
-
-                var formIdStr = formId.ToString();
-                var allButtons = new List<FormTaskNodeButtonDto>();
-                var seenIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var node in nodes)
-                {
-                    var nodeType = node["type"]?.ToString() ?? node["nodeClazz"]?.ToString();
-                    if (string.IsNullOrEmpty(nodeType) || !nodeType.Contains("FormTask", StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var nodeFormId = node["data"]?["formId"]?.ToString()
-                        ?? node["data"]?["FormId"]?.ToString()
-                        ?? node["data"]?["code"]?.ToString();
-                    if (string.IsNullOrEmpty(nodeFormId) || !string.Equals(nodeFormId, formIdStr, StringComparison.OrdinalIgnoreCase))
-                        continue;
-
-                    var buttonsArray = node["data"]?["buttons"] as JArray;
-                    if (buttonsArray == null)
-                        continue;
-
-                    foreach (var b in buttonsArray)
-                    {
-                        var source = b["source"]?.ToString();
-                        if (!string.Equals(source, "user", StringComparison.OrdinalIgnoreCase))
-                            continue;
-
-                        var btnId = b["id"]?.ToString();
-                        if (!string.IsNullOrEmpty(btnId) && seenIds.Contains(btnId))
-                            continue;
-                        if (!string.IsNullOrEmpty(btnId))
-                            seenIds.Add(btnId);
-
-                        allButtons.Add(new FormTaskNodeButtonDto
-                        {
-                            Id = btnId,
-                            Label = b["label"]?.ToString(),
-                            Action = b["action"]?.ToString(),
-                            Type = b["type"]?.ToString(),
-                            Icon = b["icon"]?.ToString(),
-                            Color = b["color"]?.ToString(),
-                            Name = b["name"]?.ToString(),
-                            Description = b["description"]?.ToString(),
-                            Visible = b["visible"]?.Value<bool?>(),
-                            Source = source
-                        });
-                    }
-                }
-
-                return allButtons.Count > 0 ? allButtons : null;
-            }
-            catch
-            {
-                return null;
-            }
         }
 
         // Yardımcı metotlar

@@ -13,7 +13,7 @@ namespace formneo.core.DTOs
         public Guid? WorkFlowDefinationId { get; set; }
         
         /// <summary>
-        /// Durum (0=NotStarted, 1=InProgress, 2=Completed, 3=Pending, 4=SendBack)
+        /// Durum (1=InProgress, 2=Completed, 3=Pending, 5=Draft, 6=Cancelled)
         /// </summary>
         public int? Durum { get; set; }
         

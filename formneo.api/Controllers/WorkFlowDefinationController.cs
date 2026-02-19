@@ -1,4 +1,6 @@
+using System.Collections.Generic;
 using AutoMapper;
+using formneo.api.Helpers;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -184,6 +186,17 @@ namespace formneo.api.Controllers
                 {
                     // JSON parse hatası durumunda boş string döner
                 }
+            }
+
+            // source: "user" butonlarını formNode ve formTaskNode'lardan çıkar
+            var formIdForButtons = latestFormId ?? workFlowDefination.FormId;
+            var parentFormIdForButtons = workFlowDefination.Form?.ParentFormId;
+            if (formIdForButtons.HasValue && !string.IsNullOrEmpty(workFlowDefination.Defination))
+            {
+                workFlowDefinationDto.Buttons = WorkflowDefinitionButtonExtractor.ExtractUserButtons(
+                    new List<string> { workFlowDefination.Defination },
+                    formIdForButtons.Value,
+                    parentFormIdForButtons);
             }
             
             return workFlowDefinationDto;

@@ -98,7 +98,10 @@ namespace formneo.workflow
             // 5. Node tamamlama işlemlerini handler'a devret (Strategy Pattern)
             var completionResult = await ProcessNodeCompletionAsync(startNode, dto, payloadJson, head.Id);
 
-            // 6. Tüm değişiklikleri veritabanına kaydet
+            // 6. WorkflowHead status'unu güncelle (Pending/Completed/InProgress)
+            head.workFlowStatus = DetermineWorkflowHeadStatus(head.workflowItems);
+
+            // 7. Tüm değişiklikleri veritabanına kaydet
             await _parameters.workFlowService.UpdateWorkFlowAndRelations(
                 head, 
                 head.workflowItems, 
@@ -106,7 +109,7 @@ namespace formneo.workflow
                 completionResult.FormItem, 
                 completionResult.FormInstance);
 
-            // 7. Mail gönder (sonraki onayçılara veya reddedilenlere)
+            // 8. Mail gönder (sonraki onayçılara veya reddedilenlere)
             await SendNotificationEmailsAsync(head);
 
             return null; // Continue response'u null döner (Controller handle eder)
@@ -155,7 +158,14 @@ namespace formneo.workflow
                 await ProcessFormInstanceForStartAsync(result, dto, payloadJson);
             }
 
-            // 7. Mail gönder (pending ApproveItem'lar için)
+            // 7. WorkflowHead status'unu workflowItems'a göre belirle
+            // Pending item varsa (taslak, form bekliyor) → Pending
+            // stopNode tamamlandıysa → Completed
+            // Diğer → InProgress
+            result.workFlowStatus = DetermineWorkflowHeadStatus(result.workflowItems);
+            await _parameters.workFlowService.UpdateAsync(result);
+
+            // 8. Mail gönder (pending ApproveItem'lar için)
             await SendNotificationEmailsAsync(result);
 
             return result;
@@ -313,52 +323,103 @@ namespace formneo.workflow
 
         /// <summary>
         /// START ile form verisi geldiğinde FormInstance oluştur
-        /// BASIT: Direkt INSERT, handler çağırmaya gerek yok
+        /// FormTaskNode varsa ondan, yoksa formNode'dan (ilk node) FormInstance oluştur
         /// </summary>
         private async Task ProcessFormInstanceForStartAsync(
             WorkflowHead head,
             WorkFlowDto dto,
             string payloadJson)
         {
-            // 1. FormTaskNode bul
-            var formTask = head.workflowItems.FirstOrDefault(wi => 
+            var utils = new Utils();
+            string formDesign = "";
+            Guid? formId = null;
+
+            // 1. Önce FormTaskNode dene (startNode → formNode → formTaskNode akışı)
+            var formTask = head.workflowItems.FirstOrDefault(wi =>
                 wi.NodeType == "formTaskNode" &&
-                wi.formItems != null && 
+                wi.formItems != null &&
                 wi.formItems.Any());
-            
-            if (formTask == null) return;
-            
-            // 2. İlk FormItem'ı al
-            var formItem = formTask.formItems.First();
-            
-            // 3. FormDesign yükle (gerekirse)
-            if (string.IsNullOrEmpty(formItem.FormDesign) && formItem.FormId.HasValue)
+
+            if (formTask != null)
+            {
+                var formItem = formTask.formItems.First();
+                formId = formItem.FormId;
+                formDesign = formItem.FormDesign ?? "";
+                if (string.IsNullOrEmpty(formDesign) && formId.HasValue)
+                {
+                    try
                     {
-                        try
-                        {
-                    var form = await _parameters._formService.GetByIdStringGuidAsync(formItem.FormId.Value);
-                            if (form != null && !string.IsNullOrEmpty(form.FormDesign))
-                    {
-                        formItem.FormDesign = form.FormDesign;
+                        var form = await _parameters._formService.GetByIdStringGuidAsync(formId.Value);
+                        if (form != null && !string.IsNullOrEmpty(form.FormDesign))
+                            formDesign = form.FormDesign;
                     }
+                    catch { }
+                }
+            }
+            else
+            {
+                // 2. FormTaskNode yoksa formNode'dan FormInstance oluştur (startNode → formNode, edge yok)
+                var formNodeItem = head.workflowItems.FirstOrDefault(wi =>
+                    string.Equals(wi.NodeType, "formNode", StringComparison.OrdinalIgnoreCase));
+
+                if (formNodeItem == null) return;
+
+                formId = GetFormIdFromFormNode(head.WorkFlowDefinationJson, formNodeItem.NodeId);
+                if (!formId.HasValue) return;
+
+                try
+                {
+                    var form = await _parameters._formService.GetByIdStringGuidAsync(formId.Value);
+                    formDesign = form?.FormDesign ?? "";
                 }
                 catch { }
             }
-            
-            // 4. ✅ Direkt FormInstance oluştur (BASIT!)
-            var utils = new Utils();
+
+            if (!formId.HasValue) return;
+
             var formInstance = new FormInstance
             {
                 WorkflowHeadId = head.Id,
-                FormId = formItem.FormId,
-                FormDesign = formItem.FormDesign,
+                FormId = formId,
+                FormDesign = formDesign,
                 FormData = payloadJson,
                 UpdatedBy = dto.UserName,
                 UpdatedByNameSurname = utils.GetNameAndSurnameAsync(dto.UserName).ToString()
             };
-            
-            // 5. ✅ Direkt INSERT
+
             await _parameters._formInstanceService.AddAsync(formInstance);
+        }
+
+        /// <summary>
+        /// Workflow definition'dan formNode'un formId'sini çıkarır
+        /// </summary>
+        private static Guid? GetFormIdFromFormNode(string definitionJson, string nodeId)
+        {
+            if (string.IsNullOrEmpty(definitionJson) || string.IsNullOrEmpty(nodeId)) return null;
+
+            try
+            {
+                var def = JObject.Parse(definitionJson);
+                var nodes = def["nodes"] as JArray;
+                if (nodes == null) return null;
+
+                var node = nodes.FirstOrDefault(n =>
+                    string.Equals(n["id"]?.ToString(), nodeId, StringComparison.OrdinalIgnoreCase)) as JObject;
+                if (node == null) return null;
+
+                var formIdStr = node["data"]?["formId"]?.ToString()
+                    ?? node["data"]?["FormId"]?.ToString()
+                    ?? node["data"]?["code"]?.ToString();
+                if (string.IsNullOrEmpty(formIdStr) && nodeId.StartsWith("formNode-", StringComparison.OrdinalIgnoreCase))
+                    formIdStr = nodeId.Substring("formNode-".Length);
+
+                if (string.IsNullOrEmpty(formIdStr)) return null;
+                return Guid.TryParse(formIdStr, out var g) ? g : null;
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         #endregion
@@ -380,9 +441,50 @@ namespace formneo.workflow
 
         private WorkflowHead CreateRollbackResponse(WorkflowHead head)
         {
-                    head.Id = Guid.Empty; // Rollback flag
-                    head.workFlowStatus = WorkflowStatus.Pending;
+            head.Id = Guid.Empty; // Rollback flag
+            head.workFlowStatus = WorkflowStatus.InProgress; // Kaydedilmez, sadece response için
             return head;
+        }
+
+        /// <summary>
+        /// WorkflowHead: Başlar (InProgress), Taslak (Draft), Tamamlanmış (Completed).
+        /// Draft: formNode/formTaskNode edge yok (SAVEDRAFT) - taslak kaydedildi.
+        /// InProgress: formTaskNode/approverNode bekliyor - workflow devam ediyor.
+        /// Completed: stopNode'a ulaştı.
+        /// </summary>
+        private static WorkflowStatus DetermineWorkflowHeadStatus(List<WorkflowItem> workflowItems)
+        {
+            if (workflowItems == null || workflowItems.Count == 0)
+                return WorkflowStatus.InProgress;
+
+            var hasStopNodeCompleted = workflowItems.Any(wi =>
+                string.Equals(wi.NodeType, "stopNode", StringComparison.OrdinalIgnoreCase) &&
+                wi.workFlowNodeStatus == WorkflowStatus.Completed);
+            if (hasStopNodeCompleted)
+                return WorkflowStatus.Completed;
+
+            // Draft: formNode edge yok VEYA formTaskNode taslak (FormData var, edge yok)
+            var formNodeDraft = workflowItems.Any(wi =>
+                string.Equals(wi.NodeType, "formNode", StringComparison.OrdinalIgnoreCase) &&
+                wi.workFlowNodeStatus == WorkflowStatus.Pending);
+            var formTaskDraft = workflowItems.Any(wi =>
+                string.Equals(wi.NodeType, "formTaskNode", StringComparison.OrdinalIgnoreCase) &&
+                wi.workFlowNodeStatus == WorkflowStatus.Pending &&
+                wi.formItems != null &&
+                wi.formItems.Any(fi => !string.IsNullOrEmpty(fi.FormData)));
+            if (formNodeDraft || formTaskDraft)
+                return WorkflowStatus.Draft;
+
+            // InProgress: formTaskNode/approverNode/alertNode bekliyor (workflow başladı)
+            var hasWaitingItem = workflowItems.Any(wi =>
+                wi.workFlowNodeStatus == WorkflowStatus.Pending &&
+                (string.Equals(wi.NodeType, "formTaskNode", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(wi.NodeType, "approverNode", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(wi.NodeType, "alertNode", StringComparison.OrdinalIgnoreCase)));
+            if (hasWaitingItem)
+                return WorkflowStatus.InProgress;
+
+            return WorkflowStatus.InProgress;
         }
 
         private void CleanNavigationProperties(WorkflowHead head)

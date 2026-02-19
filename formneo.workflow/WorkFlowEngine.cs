@@ -751,30 +751,19 @@ public class Workflow
             return null; // Form doldurulana kadar durdur
         }
         
-        // Action belirtilmişse (Start'ta gönderilen action), o action'a göre edge bul ve devam et
-        workFlowItem.workFlowNodeStatus = WorkflowStatus.Completed;
-        _workFlowItems.Add(workFlowItem);
-        
         // Action'a göre doğru edge'i bul
         var nextNode = FindLinkForPort(currentNode.Id, actionToUse);
         
         // Action kullanıldıktan sonra temizle (sadece Start'tan gelen action için)
-        // NOT: Action sadece Start'ta gönderilen action için kullanılır
-        // Sonraki formNode'lar için action Continue ile gönderilir
         if (actionToUse == _Action)
         {
             _Action = "";
         }
         
-        // Eğer action'a göre edge bulunamadıysa, formNode'dan çıkan ilk edge'i kullan
-        if (string.IsNullOrEmpty(nextNode))
-        {
-            List<Edges> outgoingLinks = Edges.FindAll(link => link.Source == currentNode.Id);
-            if (outgoingLinks.Count > 0)
-            {
-                nextNode = outgoingLinks[0].Target;
-            }
-        }
+        // Edge varsa → Completed, devam et. Edge yoksa → Pending (taslak), workflow durur.
+        // SAVEDRAFT/TEST gibi edge'siz butonlar: Form kaydedilir, WorkflowItem Pending kalır.
+        workFlowItem.workFlowNodeStatus = string.IsNullOrEmpty(nextNode) ? WorkflowStatus.Pending : WorkflowStatus.Completed;
+        _workFlowItems.Add(workFlowItem);
         
         return nextNode;
     }

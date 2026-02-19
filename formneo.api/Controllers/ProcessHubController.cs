@@ -560,11 +560,11 @@ namespace formneo.api.Controllers
         {
             return status switch
             {
-                WorkflowStatus.NotStarted => "Başlamadı",
-                WorkflowStatus.InProgress => "Devam Ediyor",
-                WorkflowStatus.Completed => "Tamamlandı",
-                WorkflowStatus.Pending => "Beklemede",
-                WorkflowStatus.SendBack => "Geri Gönderildi",
+                WorkflowStatus.Draft => "Taslak",
+                WorkflowStatus.InProgress => "Başladı",
+                WorkflowStatus.Completed => "Bitti",
+                WorkflowStatus.Cancelled => "İptal Edildi",
+                WorkflowStatus.Pending => "Beklemede", // WorkflowItem için
                 _ => "Bilinmiyor"
             };
         }
@@ -576,11 +576,11 @@ namespace formneo.api.Controllers
         {
             return status switch
             {
-                WorkflowStatus.NotStarted => "Başlamadı",
                 WorkflowStatus.InProgress => "Devam Ediyor",
                 WorkflowStatus.Completed => "Tamamlandı",
                 WorkflowStatus.Pending => "Beklemede",
-                WorkflowStatus.SendBack => "Geri Gönderildi",
+                WorkflowStatus.Draft => "Taslak",
+                WorkflowStatus.Cancelled => "İptal",
                 _ => "Bilinmiyor"
             };
         }

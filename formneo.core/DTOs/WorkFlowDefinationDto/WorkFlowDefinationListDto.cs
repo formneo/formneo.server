@@ -60,5 +60,10 @@ namespace formneo.core.DTOs
         
         // Tüm form node'larının initScript'lerini birleştirilmiş hali
         public string? InitScript { get; set; }
+
+        /// <summary>
+        /// Workflow'daki formNode ve formTaskNode'lardan source: "user" butonları
+        /// </summary>
+        public List<FormTaskNodeButtonDto>? Buttons { get; set; }
     }
 }

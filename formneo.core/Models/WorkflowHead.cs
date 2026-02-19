@@ -1,4 +1,4 @@
-﻿using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations.Schema;
@@ -10,14 +10,17 @@ using formneo.core.Models.BudgetManagement;
 namespace formneo.core.Models
 {
 
+    /// <summary>
+    /// WorkflowHead: Taslak, Başladı, Bitti, İptal. Detaylar workflowItems'dan takip edilir.
+    /// Pending sadece WorkflowItem için (node bekliyor).
+    /// </summary>
     public enum WorkflowStatus
     {
-        NotStarted,
-        InProgress,
-        Completed,
-        Pending,
-        SendBack,
-        // Diğer durumlar eklenabilir...
+        Draft = 5,      // Taslak
+        InProgress = 1, // Başladı
+        Completed = 2,   // Bitti
+        Cancelled = 6,  // İptal edildi
+        Pending = 3,    // WorkflowItem için (WorkflowHead'de kullanılmaz)
     }
 
     public class WorkflowHead : BaseEntity

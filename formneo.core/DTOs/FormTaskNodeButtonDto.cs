@@ -3,7 +3,7 @@ using System;
 namespace formneo.core.DTOs
 {
     /// <summary>
-    /// FormTaskNode'daki buton bilgisi (workflow definition'dan alınır)
+    /// FormTaskNode ve formNode'daki buton bilgisi (workflow definition'dan alınır)
     /// Sadece source: "user" olan butonlar API yanıtlarına dahil edilir
     /// </summary>
     public class FormTaskNodeButtonDto
@@ -17,6 +17,17 @@ namespace formneo.core.DTOs
         public string? Name { get; set; }
         public string? Description { get; set; }
         public bool? Visible { get; set; }
+        /// <summary>
+        /// Her zaman "user" - sadece kullanıcı tanımlı butonlar döner
+        /// </summary>
         public string? Source { get; set; }
+        /// <summary>
+        /// Bu butonun geldiği node'un id'si (örn: formNode-xxx, formTaskNode guid)
+        /// </summary>
+        public string? NodeId { get; set; }
+        /// <summary>
+        /// Bu butonun geldiği node tipi (formNode veya formTaskNode)
+        /// </summary>
+        public string? NodeType { get; set; }
     }
 }

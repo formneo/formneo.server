@@ -252,7 +252,8 @@ namespace formneo.api.Controllers
                 .Where(e => e.FormItemStatus == FormItemStatus.Pending 
                     && e.FormUserId == userId  // ✅ UserId ile karşılaştır
                     && e.WorkFlowHead != null
-                    && e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress)
+                    && (e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.InProgress
+                        || e.WorkFlowHead.workFlowStatus == formneo.core.Models.WorkflowStatus.Draft))
                 .OrderByDescending(e => e.CreatedDate)
                 .ToList();
 
@@ -564,7 +565,9 @@ namespace formneo.api.Controllers
                                         Name = b["name"]?.ToString(),
                                         Description = b["description"]?.ToString(),
                                         Visible = b["visible"]?.Value<bool?>(),
-                                        Source = b["source"]?.ToString()
+                                        Source = "user",
+                                        NodeId = workflowItem.NodeId,
+                                        NodeType = workflowItem.NodeType
                                     })
                                     .ToList();
                             }
@@ -1026,11 +1029,11 @@ namespace formneo.api.Controllers
         {
             return status switch
             {
-                formneo.core.Models.WorkflowStatus.NotStarted => "Başlamadı",
-                formneo.core.Models.WorkflowStatus.InProgress => "Devam Ediyor",
-                formneo.core.Models.WorkflowStatus.Completed => "Tamamlandı",
+                formneo.core.Models.WorkflowStatus.Draft => "Taslak",
+                formneo.core.Models.WorkflowStatus.InProgress => "Başladı",
+                formneo.core.Models.WorkflowStatus.Completed => "Bitti",
+                formneo.core.Models.WorkflowStatus.Cancelled => "İptal Edildi",
                 formneo.core.Models.WorkflowStatus.Pending => "Beklemede",
-                formneo.core.Models.WorkflowStatus.SendBack => "Geri Gönderildi",
                 _ => "Bilinmiyor"
             };
         }
